@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: test-service
+  namespace: test
+  annotations:
+    kube-port-forward-controller/open: "true"
+    kube-router-port-forward/ports: "1234"
+spec:
+  selector:
+    app: test-service
+  ports:
+  - port: 81
+    protocol: TCP
+    targetPort: 81
+  type: LoadBalancer
+  allocateLoadBalancerNodePorts: false  # Prevents node port allocation
