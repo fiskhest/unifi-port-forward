@@ -25,7 +25,7 @@ var (
 )
 
 const (
-	filterAnnotation = "kube-port-forward-controller/open"
+	filterAnnotation = "kube-port-forward-controller/ports"
 )
 
 // TODO: unused?

@@ -17,9 +17,8 @@ type PortConfig struct {
 	Name      string
 	Enabled   bool
 	Interface string
-	SrcPort   int // External port (what users connect to)
-	DstPort   int // Internal port (what service listens on)
-	FwdPort   int // The forwarded port
+	DstPort   int // External port (what users connect to)
+	FwdPort   int // Internal port (what service listens on)
 	SrcIP     string
 	DstIP     string
 	Protocol  string

@@ -300,3 +300,73 @@ func (t *ServiceEventTracker) HasServiceEvent(eventType, serviceName, namespace 
 	}
 	return false
 }
+
+// TestPort represents a port configuration for testing
+type TestPort struct {
+	Name     string
+	Port     int32
+	Protocol v1.Protocol
+}
+
+// CreateTestMultiPortService creates a test LoadBalancer service with multiple ports
+func CreateTestMultiPortService(name, namespace string, ports []TestPort, ip string, annotation string) *v1.Service {
+	annotations := make(map[string]string)
+	if annotation != "" {
+		annotations["kube-port-forward-controller/ports"] = annotation
+	}
+
+	var servicePorts []v1.ServicePort
+	for _, port := range ports {
+		servicePorts = append(servicePorts, v1.ServicePort{
+			Name:     port.Name,
+			Port:     port.Port,
+			Protocol: port.Protocol,
+		})
+	}
+
+	service := &v1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        name,
+			Namespace:   namespace,
+			Annotations: annotations,
+		},
+		Spec: v1.ServiceSpec{
+			Type:  v1.ServiceTypeLoadBalancer,
+			Ports: servicePorts,
+		},
+		Status: v1.ServiceStatus{
+			LoadBalancer: v1.LoadBalancerStatus{
+				Ingress: []v1.LoadBalancerIngress{
+					{
+						IP:       ip,
+						Hostname: fmt.Sprintf("%s.%s.svc.cluster.local", name, namespace),
+					},
+				},
+			},
+		},
+	}
+
+	return service
+}
+
+// CreateTestServiceWithPortConflict creates two services with conflicting external ports
+func CreateTestServiceWithPortConflict(name1, name2, namespace string, sameExternalPort int, ip string) (*v1.Service, *v1.Service) {
+	// First service
+	service1 := CreateTestMultiPortService(name1, namespace, []TestPort{
+		{Name: "http", Port: 80, Protocol: v1.ProtocolTCP},
+	}, ip, fmt.Sprintf("http:%d", sameExternalPort))
+
+	// Second service with same external port
+	service2 := CreateTestMultiPortService(name2, namespace, []TestPort{
+		{Name: "web", Port: 8080, Protocol: v1.ProtocolTCP},
+	}, ip, fmt.Sprintf("web:%d", sameExternalPort))
+
+	return service1, service2
+}
+
+// CreateTestServiceWithInvalidAnnotation creates a service with invalid annotation
+func CreateTestServiceWithInvalidAnnotation(name, namespace string, ip string, invalidAnnotation string) *v1.Service {
+	return CreateTestMultiPortService(name, namespace, []TestPort{
+		{Name: "http", Port: 80, Protocol: v1.ProtocolTCP},
+	}, ip, invalidAnnotation)
+}

@@ -3,7 +3,6 @@ package handlers
 import (
 	"fmt"
 	"log"
-	"strings"
 
 	v1 "k8s.io/api/core/v1"
 	"kube-router-port-forward/routers"
@@ -17,14 +16,6 @@ func (h *serviceHandler) handleUpdate(oldService, newService *v1.Service) {
 
 	serviceKey := h.getServiceKey(newService)
 
-	fmt.Printf("update_handler: called for %s\n", serviceKey)
-	fmt.Printf("update_handler: Old LB IP: %s, New LB IP: %s\n", oldLBIP, newLBIP)
-
-	// Skip updates if both IPs are node IPs (transient)
-	if h.shouldSkipUpdate(serviceKey, oldLBIP, newLBIP) {
-		return
-	}
-
 	if newService.Spec.Type != "LoadBalancer" {
 		log.Printf("Service %s is not a Load Balancer.. Skipping\n", newService.Name)
 		return
@@ -33,129 +24,145 @@ func (h *serviceHandler) handleUpdate(oldService, newService *v1.Service) {
 	_, oldExists := oldService.Annotations[h.filterAnnotation]
 	_, newExists := newService.Annotations[h.filterAnnotation]
 
-	oldPort := int(oldService.Spec.Ports[0].Port)
-	newPort := int(newService.Spec.Ports[0].Port)
+	fmt.Printf("update_handler: called for %s\n", serviceKey)
+	fmt.Printf("update_handler: Old LB IP: %s, New LB IP: %s\n", oldLBIP, newLBIP)
 
-	// If service was unannotated, remove all ports
+	// Skip updates if both IPs are node IPs (transient)
+	if h.shouldSkipUpdate(serviceKey, oldLBIP, newLBIP) {
+		return
+	}
+
+	// Handle annotation removal
 	if oldExists && !newExists {
-		fmt.Printf("Remove port %d from router\n", oldService.Spec.Ports[0].Port)
-		pc := routers.PortConfig{
-			Name:      oldService.Name,
-			DstPort:   oldPort,
-			Enabled:   true,
-			Interface: "wan",
-			DstIP:     GetLBIP(oldService),
-			Protocol:  strings.ToLower(string(oldService.Spec.Ports[0].Protocol)),
-		}
-		err := h.router.RemovePort(h.ctx, pc)
-		if err != nil {
-			h.logError("Trying to delete service after annotation removal", err, oldService)
-		}
+		fmt.Printf("Service %s: Annotation removed, cleaning up all ports\n", serviceKey)
+		h.handleAnnotationRemoval(oldService)
 		h.updateDebounceTimestamp(serviceKey)
 		return
 	}
-	// If the service was annotated, add the port
+
+	// Handle annotation addition
 	if !oldExists && newExists {
-		fmt.Printf("Update Detected %s\n", newService.Name)
-		fmt.Printf("Add port %d to router", newPort)
-		pc := getPortConfig(newService)
-		err := h.router.AddPort(h.ctx, pc)
-		if err != nil {
-			h.logError("Error trying to add port", err, newService)
-		}
-
+		fmt.Printf("Service %s: Annotation added, adding all ports\n", serviceKey)
+		h.handleAnnotationAddition(newService)
 		h.updateDebounceTimestamp(serviceKey)
 		return
 	}
 
-	// If the old service and new service have a port
+	// Handle port changes when both have annotations
 	if oldExists && newExists {
-		if oldPort != newPort {
-			// Port changed: find existing rule and update it
-			fmt.Printf("UpdateFunc: Port changing from %d→%d for service %s/%s (IP: %s)\n", oldPort, newPort, newService.Namespace, newService.Name, newLBIP)
+		fmt.Printf("Service %s: Both services have annotations, comparing ports\n", serviceKey)
+		h.handlePortComparison(oldService, newService)
+		h.updateDebounceTimestamp(serviceKey)
+	}
+}
 
-			_, portExists, err := h.router.CheckPort(h.ctx, oldPort)
-			if err != nil {
-				h.logError("Error checking port", err, newService)
-				return
-			}
+// handleAnnotationRemoval removes all ports when annotation is removed
+func (h *serviceHandler) handleAnnotationRemoval(oldService *v1.Service) {
+	serviceKey := h.getServiceKey(oldService)
 
-			if portExists {
-				// Update existing rule with new port
-				pc := getPortConfig(newService)
-				pc.DstPort = newPort
-				err := h.router.UpdatePort(h.ctx, oldPort, pc)
-				if err != nil {
-					h.logError("Error updating port forward rule", err, newService)
-					return
-				}
-				fmt.Printf("Successfully updated port forward rule from %d to %d\n", oldPort, newPort)
-				h.updateDebounceTimestamp(serviceKey)
-			} else {
-				// No existing rule found, just add new one
-				fmt.Printf("UpdateFunc: No existing rule found for port %d, adding new rule\n", oldPort)
-				pc := getPortConfig(newService)
-				err := h.router.AddPort(h.ctx, pc)
-				if err != nil {
-					h.logError("Error adding new port forward rule", err, newService)
-				} else {
-					fmt.Printf("Successfully added new port forward rule for port %d\n", newPort)
-					h.updateDebounceTimestamp(serviceKey)
-				}
-			}
-			return
+	oldPortConfigs, err := GetPortConfigs(oldService, h.filterAnnotation)
+	if err != nil {
+		h.logError("Failed to get old port configurations", err, oldService)
+		return
+	}
+
+	successCount := 0
+	for _, pc := range oldPortConfigs {
+		fmt.Printf("Removing port %d for service %s (annotation removed)\n", pc.DstPort, serviceKey)
+
+		if err := h.router.RemovePort(h.ctx, pc); err != nil {
+			h.logError(fmt.Sprintf("Removing port %d after annotation removal", pc.DstPort), err, oldService)
+			continue
 		}
 
-		// Port didn't change, but we should ensure rule exists and has correct IP
-		// This handles cases where rule might have been manually deleted or IP changed
-		fmt.Printf("DEBUG: UpdateFunc - Port unchanged (%d), ensuring rule exists for ip: %s (service: %s/%s)\n", newPort, newLBIP, newService.Namespace, newService.Name)
-		pf, portExists, err := h.router.CheckPort(h.ctx, newPort)
-		if err != nil {
-			h.logError("Error checking port", err, newService)
-			return
-		}
+		unmarkPortUsed(pc.DstPort)
+		fmt.Printf("Port %d: Successfully removed port forward rule\n", pc.DstPort)
+		successCount++
+	}
 
-		if !portExists {
-			// Rule doesn't exist, add it
-			pc := getPortConfig(newService)
-			err := h.router.AddPort(h.ctx, pc)
-			if err != nil {
-				h.logError("Error adding missing port forward rule", err, newService)
-			} else {
-				fmt.Printf("Successfully added missing port forward rule for port %d\n", newPort)
-				h.updateDebounceTimestamp(serviceKey)
+	fmt.Printf("Service %s: Successfully removed %d/%d ports after annotation removal\n", serviceKey, successCount, len(oldPortConfigs))
+}
+
+// handleAnnotationAddition adds all ports when annotation is added
+func (h *serviceHandler) handleAnnotationAddition(newService *v1.Service) {
+	// This is essentially the same as handleAdd logic
+	h.handleAdd(newService)
+}
+
+// handlePortComparison compares old and new port configurations
+func (h *serviceHandler) handlePortComparison(oldService, newService *v1.Service) {
+	serviceKey := h.getServiceKey(newService)
+
+	oldPortConfigs, err := GetPortConfigs(oldService, h.filterAnnotation)
+	if err != nil {
+		h.logError("Failed to get old port configurations", err, oldService)
+		return
+	}
+
+	newPortConfigs, err := GetPortConfigs(newService, h.filterAnnotation)
+	if err != nil {
+		h.logError("Failed to get new port configurations", err, newService)
+		return
+	}
+
+	// Create maps for easier comparison
+	oldPorts := make(map[int]routers.PortConfig)
+	newPorts := make(map[int]routers.PortConfig)
+
+	for _, pc := range oldPortConfigs {
+		oldPorts[pc.DstPort] = pc
+	}
+
+	for _, pc := range newPortConfigs {
+		newPorts[pc.DstPort] = pc
+	}
+
+	// Handle port additions (ports in new but not in old)
+	for externalPort, newPc := range newPorts {
+		if _, exists := oldPorts[externalPort]; !exists {
+			fmt.Printf("Port %d: Added to service %s\n", externalPort, serviceKey)
+
+			if err := h.router.AddPort(h.ctx, newPc); err != nil {
+				h.logError(fmt.Sprintf("Adding new port %d", externalPort), err, newService)
+				continue
 			}
-		} else {
-			// Rule exists, check if IP needs updating
-			if pf.Fwd != newLBIP {
-				// IP changed, update the existing rule
-				fmt.Printf("UpdateFunc: IP changed from %s to %s, updating rule for port %d\n", pf.Fwd, newLBIP, newPort)
 
-				pc := getPortConfig(newService)
-				err := h.router.UpdatePort(h.ctx, newPort, pc)
-				if err != nil {
-					h.logError("Error updating port forward rule", err, newService)
-				} else {
-					fmt.Printf("Successfully updated port forward rule for port %d with new IP\n", newPort)
-					h.updateDebounceTimestamp(serviceKey)
+			markPortUsed(externalPort, serviceKey)
+			fmt.Printf("Port %d: Successfully added new port forward rule\n", externalPort)
+		}
+	}
+
+	// Handle port removals (ports in old but not in new)
+	for externalPort, oldPc := range oldPorts {
+		if _, exists := newPorts[externalPort]; !exists {
+			fmt.Printf("Port %d: Removed from service %s\n", externalPort, serviceKey)
+
+			if err := h.router.RemovePort(h.ctx, oldPc); err != nil {
+				h.logError(fmt.Sprintf("Removing port %d", externalPort), err, newService)
+				continue
+			}
+
+			unmarkPortUsed(externalPort)
+			fmt.Printf("Port %d: Successfully removed port forward rule\n", externalPort)
+		}
+	}
+
+	// Handle port updates (ports in both old and new)
+	for externalPort, newPc := range newPorts {
+		if oldPc, exists := oldPorts[externalPort]; exists {
+			// Check if IP or other properties changed
+			if oldPc.DstIP != newPc.DstIP || oldPc.FwdPort != newPc.FwdPort {
+				fmt.Printf("Port %d: Configuration changed for service %s\n", externalPort, serviceKey)
+
+				if err := h.router.UpdatePort(h.ctx, externalPort, newPc); err != nil {
+					h.logError(fmt.Sprintf("Updating port %d", externalPort), err, newService)
+					continue
 				}
-			} else {
-				fmt.Printf("UpdateFunc: Port %d rule already exists with correct IP, no action needed\n", newPort)
-			}
-		}
 
-		if !portExists {
-			// Rule doesn't exist, add it
-			pc := getPortConfig(newService)
-			err := h.router.AddPort(h.ctx, pc)
-			if err != nil {
-				h.logError("Error adding missing port forward rule", err, newService)
+				fmt.Printf("Port %d: Successfully updated port forward rule\n", externalPort)
 			} else {
-				fmt.Printf("Successfully added missing port forward rule for port %d\n", newPort)
-				h.updateDebounceTimestamp(serviceKey)
+				fmt.Printf("Port %d: No changes needed for service %s\n", externalPort, serviceKey)
 			}
-		} else {
-			fmt.Printf("UpdateFunc: Port %d rule already exists, no action needed\n", newPort)
 		}
 	}
 }

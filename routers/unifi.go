@@ -64,7 +64,6 @@ func CreateUnifiRouter(baseurl, username, password, site string) (*UnifiRouter, 
 // 	return unifi.PortForward{}, false
 // }
 
-// returns pf, portExists, err
 func (router *UnifiRouter) CheckPort(ctx context.Context, port int) (*unifi.PortForward, bool, error) {
 	portforwards, err := router.Client.ListPortForward(ctx, router.SiteID)
 	if err != nil {
@@ -90,11 +89,11 @@ func (router *UnifiRouter) AddPort(ctx context.Context, config PortConfig) error
 	}
 
 	portforward := &unifi.PortForward{
-		SiteID:  router.SiteID,
-		Enabled: config.Enabled,
-		Fwd:     config.DstIP,
-		FwdPort: strconv.Itoa(config.DstPort), // Internal port
-		// DstPort:       strconv.Itoa(config.SrcPort), // External port (same as FwdPort for simplicity)
+		SiteID:        router.SiteID,
+		Enabled:       config.Enabled,
+		Fwd:           config.DstIP,
+		FwdPort:       strconv.Itoa(config.FwdPort),
+		DstPort:       strconv.Itoa(config.DstPort),
 		Name:          config.Name,
 		PfwdInterface: config.Interface,
 		Proto:         config.Protocol,
@@ -115,14 +114,13 @@ func (router *UnifiRouter) UpdatePort(ctx context.Context, port int, config Port
 	}
 
 	if portExists {
-		// TODO: test if config.DstIP is empty and error out (do not update rule)
 		portforward := &unifi.PortForward{
-			ID:      pf.ID,
-			SiteID:  router.SiteID,
-			Enabled: config.Enabled,
-			Fwd:     config.DstIP,
-			FwdPort: strconv.Itoa(config.DstPort), // Internal port
-			// DstPort:       strconv.Itoa(config.SrcPort), // External port
+			ID:            pf.ID,
+			SiteID:        router.SiteID,
+			Enabled:       config.Enabled,
+			Fwd:           config.DstIP,
+			FwdPort:       strconv.Itoa(config.FwdPort),
+			DstPort:       strconv.Itoa(config.DstPort),
 			Name:          config.Name,
 			PfwdInterface: config.Interface,
 			Proto:         config.Protocol,
@@ -151,26 +149,3 @@ func (router *UnifiRouter) RemovePort(ctx context.Context, config PortConfig) er
 	}
 	return nil
 }
-
-// Utility helper: find the PortForward rule ID that matches the config
-// func GetPortForwardRuleID(ctx context.Context, client unifi.Client, siteID string, config PortConfig) (string, error) {
-// 	portforwards, err := client.ListPortForward(ctx, siteID)
-// 	if err != nil {
-// 		return "", fmt.Errorf("listing port forwards: %w", err)
-// 	}
-
-// 	for _, pf := range portforwards {
-// 		dstPort, _ := strconv.Atoi(pf.DstPort)
-// 		fwdPort, _ := strconv.Atoi(pf.FwdPort)
-
-// 		if dstPort == config.DstPort &&
-// 			fwdPort == config.SrcPort &&
-// 			pf.Fwd == config.SrcIP &&
-// 			pf.Proto == config.Protocol &&
-// 			pf.PfwdInterface == config.Interface {
-// 			return pf.ID, nil
-// 		}
-// 	}
-
-// 	return "", fmt.Errorf("no matching port-forward rule found for %v", config)
-// }
