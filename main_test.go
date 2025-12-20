@@ -6,7 +6,8 @@ import (
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"kube-router-port-forward/handlers"
+	"kube-router-port-forward/config"
+	"kube-router-port-forward/helpers"
 	"kube-router-port-forward/testutils"
 )
 
@@ -21,7 +22,7 @@ func TestServiceLifecycle_AddFunc(t *testing.T) {
 		"default",
 		8080,
 		"192.168.1.100",
-		map[string]string{filterAnnotation: "true"},
+		map[string]string{config.FilterAnnotation: "true"},
 	)
 
 	// Simulate AddFunc call
@@ -33,7 +34,7 @@ func TestServiceLifecycle_AddFunc(t *testing.T) {
 			return
 		}
 
-		if _, exists := svc.Annotations[filterAnnotation]; exists {
+		if _, exists := svc.Annotations[config.FilterAnnotation]; exists {
 			// In a real scenario, this would call router.AddPort()
 			// For testing, we just verify the logic
 			port := int(svc.Spec.Ports[0].Port)
@@ -41,7 +42,7 @@ func TestServiceLifecycle_AddFunc(t *testing.T) {
 				t.Errorf("Expected port 8080, got %d", port)
 			}
 
-			ip := handlers.GetLBIP(svc)
+			ip := helpers.GetLBIP(svc)
 			if ip != "192.168.1.100" {
 				t.Errorf("Expected IP 192.168.1.100, got %s", ip)
 			}
@@ -68,7 +69,7 @@ func TestServiceLifecycle_UpdateFunc(t *testing.T) {
 		"default",
 		8080,
 		"192.168.1.100",
-		map[string]string{filterAnnotation: "true"},
+		map[string]string{config.FilterAnnotation: "true"},
 	)
 
 	// Create updated service with different port
@@ -77,7 +78,7 @@ func TestServiceLifecycle_UpdateFunc(t *testing.T) {
 		"default",
 		9090,
 		"192.168.1.100",
-		map[string]string{filterAnnotation: "true"},
+		map[string]string{config.FilterAnnotation: "true"},
 	)
 
 	// Simulate UpdateFunc call
@@ -90,8 +91,8 @@ func TestServiceLifecycle_UpdateFunc(t *testing.T) {
 			return
 		}
 
-		_, oldExists := oldSvc.Annotations[filterAnnotation]
-		_, newExists := newSvc.Annotations[filterAnnotation]
+		_, oldExists := oldSvc.Annotations[config.FilterAnnotation]
+		_, newExists := newSvc.Annotations[config.FilterAnnotation]
 
 		// Handle annotation removal
 		if oldExists && !newExists {
@@ -149,7 +150,7 @@ func TestServiceLifecycle_DeleteFunc(t *testing.T) {
 		"default",
 		8080,
 		"192.168.1.100",
-		map[string]string{filterAnnotation: "true"},
+		map[string]string{config.FilterAnnotation: "true"},
 	)
 
 	// Simulate DeleteFunc call
@@ -161,14 +162,14 @@ func TestServiceLifecycle_DeleteFunc(t *testing.T) {
 			return
 		}
 
-		if _, exists := svc.Annotations[filterAnnotation]; exists {
+		if _, exists := svc.Annotations[config.FilterAnnotation]; exists {
 			// In a real scenario, this would call router.RemovePort()
 			port := int(svc.Spec.Ports[0].Port)
 			if port != 8080 {
 				t.Errorf("Expected port 8080, got %d", port)
 			}
 
-			ip := handlers.GetLBIP(svc)
+			ip := helpers.GetLBIP(svc)
 			if ip != "192.168.1.100" {
 				t.Errorf("Expected IP 192.168.1.100, got %s", ip)
 			}
@@ -237,7 +238,7 @@ func TestServiceLifecycle_NoAnnotation(t *testing.T) {
 			return
 		}
 
-		if _, exists := svc.Annotations[filterAnnotation]; exists {
+		if _, exists := svc.Annotations[config.FilterAnnotation]; exists {
 			// This should not be reached
 			t.Error("Service without annotation should not trigger port forward creation")
 		}
@@ -263,7 +264,7 @@ func TestServiceLifecycle_MultiplePorts(t *testing.T) {
 			Name:      "test-service",
 			Namespace: "default",
 			Annotations: map[string]string{
-				filterAnnotation: "true",
+				config.FilterAnnotation: "true",
 			},
 		},
 		Spec: v1.ServiceSpec{
@@ -299,7 +300,7 @@ func TestServiceLifecycle_MultiplePorts(t *testing.T) {
 			return
 		}
 
-		if _, exists := svc.Annotations[filterAnnotation]; exists {
+		if _, exists := svc.Annotations[config.FilterAnnotation]; exists {
 			// Currently only handles first port (as noted in TODO in main.go)
 			port := int(svc.Spec.Ports[0].Port)
 			if port != 8080 {

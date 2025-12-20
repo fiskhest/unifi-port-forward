@@ -1,8 +1,19 @@
-# Build
-FROM --platform=linux/amd64 golang 
+# Multi-stage build for kube-port-forward-controller
 
-WORKDIR /build
-COPY . . 
-RUN go build -v -o /app/port-forward
-WORKDIR /app
-CMD ["./port-forward"]
+# Stage 1: Build controller
+FROM golang:1.23-alpine AS builder
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go mod download
+COPY . .
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build -a -ldflags="-w -s" -o /app/kube-port-forward-controller .
+
+# Stage 2: Distroless runtime
+FROM gcr.io/distroless/static:nonroot
+COPY --from=builder /app/kube-port-forward-controller /kube-port-forward-controller
+USER 65532:65532
+ENTRYPOINT ["/kube-port-forward-controller"]

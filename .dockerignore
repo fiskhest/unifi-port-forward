@@ -1,0 +1,48 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Documentation
+*.md
+docs/
+README.md
+
+# Test files
+*_test.go
+scripts/
+*.yaml
+*.yml
+test-*.yaml
+stable-service.yaml
+test-service.yaml
+test-services.yaml
+test-manifest.yaml
+
+# Build artifacts
+*.exe
+kube-port-forward-controller
+service-debugger
+cleaner
+
+# Dependencies
+vendor/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Docker
+Dockerfile*
+docker-bake*
+.dockerignore

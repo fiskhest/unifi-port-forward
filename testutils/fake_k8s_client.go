@@ -8,6 +8,12 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+// createVIPMode creates a VIP LoadBalancerIPMode pointer
+func createVIPMode() *v1.LoadBalancerIPMode {
+	mode := v1.LoadBalancerIPModeVIP
+	return &mode
+}
+
 // FakeKubernetesClient simulates Kubernetes operations for testing
 type FakeKubernetesClient struct {
 	Services map[string]*v1.Service
@@ -101,6 +107,7 @@ func CreateTestLoadBalancerService(name, namespace string, port int32, ip string
 					{
 						IP:       ip,
 						Hostname: fmt.Sprintf("%s.%s.svc.cluster.local", name, namespace),
+						IPMode:   createVIPMode(),
 					},
 				},
 			},
@@ -152,6 +159,7 @@ func CreateTestLoadBalancerServiceWithMultipleIPs(name, namespace string, port i
 		ingress = append(ingress, v1.LoadBalancerIngress{
 			IP:       ip,
 			Hostname: fmt.Sprintf("%s-%d.%s.svc.cluster.local", name, i, namespace),
+			IPMode:   createVIPMode(),
 		})
 	}
 
@@ -340,6 +348,7 @@ func CreateTestMultiPortService(name, namespace string, ports []TestPort, ip str
 					{
 						IP:       ip,
 						Hostname: fmt.Sprintf("%s.%s.svc.cluster.local", name, namespace),
+						IPMode:   createVIPMode(),
 					},
 				},
 			},

@@ -11,6 +11,7 @@ type Router interface {
 	CheckPort(ctx context.Context, port int) (*unifi.PortForward, bool, error)
 	RemovePort(ctx context.Context, config PortConfig) error
 	UpdatePort(ctx context.Context, port int, config PortConfig) error
+	ListAllPortForwards(ctx context.Context) ([]*unifi.PortForward, error)
 }
 
 type PortConfig struct {

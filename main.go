@@ -1,20 +1,22 @@
 package main
 
 import (
-	"fmt"
 	"log"
+	"log/slog"
+	"net/url"
 	"os"
-	"time"
+	"os/signal"
+	"syscall"
 
-	"kube-router-port-forward/handlers"
+	"kube-router-port-forward/controller"
 	"kube-router-port-forward/routers"
 
-	v1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/fields"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/cache"
+	"github.com/go-logr/logr"
+
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	ctrl "sigs.k8s.io/controller-runtime"
+	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 var (
@@ -22,21 +24,35 @@ var (
 	username = os.Getenv("UNIFI_USERNAME")
 	password = os.Getenv("UNIFI_PASSWORD")
 	site     = os.Getenv("UNIFI_SITE")
+	apiKey   = os.Getenv("UNIFI_API_KEY")
+	debug    = os.Getenv("DEBUG")
 )
-
-const (
-	filterAnnotation = "kube-port-forward-controller/ports"
-)
-
-// TODO: unused?
-// var router routers.Router
 
 func main() {
+	loglevel := slog.LevelWarn
+	if debug != "" {
+		loglevel = slog.LevelDebug
+	}
+
+	// Set up controller-runtime logging with slog
+	slogLogger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+		Level: loglevel,
+	}))
+	ctrlLogger := logr.FromSlogHandler(slogLogger.Handler())
+	ctrllog.SetLogger(ctrlLogger)
+
+	ctrlLogger.Info("Starting kube-port-forward-controller", "log_level", loglevel.String())
+
+	setupGracefulShutdown()
+
 	if routerIP == "" {
 		routerIP = "192.168.27.1"
 	}
 
-	baseURL := fmt.Sprintf("https://%s", routerIP)
+	baseURL := url.URL{
+		Scheme: "https",
+		Host:   routerIP,
+	}
 
 	if site == "" {
 		site = "default"
@@ -46,47 +62,47 @@ func main() {
 		username = "admin"
 	}
 
-	router, err := routers.CreateUnifiRouter(baseURL, username, password, site)
+	router, err := routers.CreateUnifiRouter(baseURL.String(), username, password, site, apiKey)
 	if err != nil {
-		log.Fatalf("Creating router: %v\n", err)
+		log.Fatalf("Failed to create router: %v\n", err)
 	}
 
-	// load in cluster config from service account
-	config, err := rest.InClusterConfig()
+	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+		Scheme:           runtime.NewScheme(),
+		LeaderElection:   true,
+		LeaderElectionID: "port-forward-controller",
+	})
 	if err != nil {
-		panic(err.Error())
+		log.Fatalf("Failed to create manager: %v\n", err)
 	}
 
-	clientset, err := kubernetes.NewForConfig(config)
-	if err != nil {
-		panic(err.Error())
+	if err := corev1.AddToScheme(mgr.GetScheme()); err != nil {
+		log.Fatalf("Failed to add corev1 to scheme: %v\n", err)
 	}
 
-	watchlist := cache.NewListWatchFromClient(
-		clientset.CoreV1().RESTClient(),
-		"services",
-		metav1.NamespaceAll,
-		fields.Everything(),
-	)
+	reconciler := &controller.PortForwardReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+		Router: router,
+	}
 
-	// Create service handler with dependencies
-	serviceHandler := handlers.NewServiceHandler(router, router.Client, site, filterAnnotation)
+	if err := reconciler.SetupWithManager(mgr); err != nil {
+		log.Fatalf("Failed to setup controller: %v\n", err)
+	}
 
-	_, controller := cache.NewInformer(
-		watchlist,
-		&v1.Service{},
-		time.Second*0,
-		cache.ResourceEventHandlerFuncs{
-			AddFunc:    serviceHandler.OnAdd,
-			UpdateFunc: serviceHandler.OnUpdate,
-			DeleteFunc: serviceHandler.OnDelete,
-		},
-	)
+	ctrlLogger.Info("Starting manager")
+	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
+		log.Fatalf("Failed to start manager: %v\n", err)
+	}
+}
 
-	stop := make(chan struct{})
-	defer close(stop)
-	go controller.Run(stop)
+func setupGracefulShutdown() {
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
-	// Wait forever
-	select {}
+	go func() {
+		<-sigCh
+		log.Println("Received shutdown signal, gracefully stopping...")
+		os.Exit(0)
+	}()
 }

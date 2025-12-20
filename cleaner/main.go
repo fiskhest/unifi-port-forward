@@ -49,7 +49,7 @@ func main() {
 
 	// 2. Rules to delete
 	portMaps := map[string]string{
-		"81": "192.168.27.130",
+		"83": "192.168.27.130",
 	}
 
 	portforwards, err := client.ListPortForward(ctx, site)
