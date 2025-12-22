@@ -5,10 +5,10 @@
 - remove the "legacy portforward namestandard migration logic"
   - should be removed but verify in code
 
+  * [ ] clean up PortKey
 
 - is implementing a new logger package in logging/logger.go the idiomatic approach? should we not use slog or logr for controller runtime? 
-  - running
-    - wtf is logger.V(1).Info???? Why not log.FromContext()?
+  - [ ] wtf is logger.V(1).Info???? Why not log.FromContext()? 
 
 - move to spf13/cobra + flags and env vars builtin handling, add parsing in config
 

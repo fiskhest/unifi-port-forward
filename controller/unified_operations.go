@@ -10,8 +10,29 @@ import (
 	"kube-router-port-forward/config"
 	"kube-router-port-forward/helpers"
 	"kube-router-port-forward/routers"
-	"sigs.k8s.io/controller-runtime/pkg/log"
+	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
 )
+
+/*
+Port Key Format Documentation:
+
+Two different key formats are used in this file:
+
+1. For desired configurations: "dstPort-fwdPort-protocol" (e.g., "8080-8081-tcp")
+   - Maps desired service port configurations
+   - Used to track what should exist in router
+
+2. For current router state: "dstPort-fwdPort-protocol" (same format)
+   - Maps existing UniFi port forward rules
+   - Used to compare against desired configurations
+
+Both formats ensure uniqueness by including all three components:
+- dstPort: External port number
+- fwdPort: Internal port number
+- protocol: TCP/UDP
+
+This allows accurate comparison between desired state and current router state.
+*/
 
 // OperationType represents the type of port operation
 type OperationType string
@@ -58,7 +79,9 @@ func (r *PortForwardReconciler) calculateDelta(currentRules []*unifi.PortForward
 	servicePrefix := fmt.Sprintf("%s/%s:", service.Namespace, service.Name)
 
 	// Build maps for efficient lookup
-	desiredMap := make(map[string]routers.PortConfig) // portKey -> desired config
+	// Create map of desired port configurations using dstPort-fwdPort-protocol as key
+	// This key format ensures uniqueness for port forward rules and matches router state format
+	desiredMap := make(map[string]routers.PortConfig)
 	for _, config := range desiredConfigs {
 		portKey := fmt.Sprintf("%d-%d-%s", config.DstPort, config.FwdPort, config.Protocol)
 		desiredMap[portKey] = config
@@ -69,6 +92,8 @@ func (r *PortForwardReconciler) calculateDelta(currentRules []*unifi.PortForward
 		if strings.HasPrefix(rule.Name, servicePrefix) {
 			dstPort := r.parseIntField(rule.DstPort)
 			fwdPort := r.parseIntField(rule.FwdPort)
+			// Use same key format as desiredMap for proper comparison
+			// This ensures we can accurately compare desired vs current router state
 			portKey := fmt.Sprintf("%d-%d-%s", dstPort, fwdPort, rule.Proto)
 			currentMap[portKey] = rule
 		}
@@ -130,7 +155,7 @@ func (r *PortForwardReconciler) executeOperations(ctx context.Context, operation
 	result := &OperationResult{}
 	var completedOperations []PortOperation
 
-	log.FromContext(ctx).Info("Executing port operations",
+	ctrllog.FromContext(ctx).Info("Executing port operations",
 		"total_operations", len(operations))
 
 	for _, op := range operations {
@@ -158,7 +183,7 @@ func (r *PortForwardReconciler) executeOperations(ctx context.Context, operation
 			result.Failed = append(result.Failed, err)
 
 			// Attempt rollback of completed operations
-			logger := log.FromContext(ctx)
+			logger := ctrllog.FromContext(ctx)
 			logger.Info("Operation failed, attempting rollback of completed operations",
 				"operation", op.String(),
 				"error", err)
@@ -173,13 +198,13 @@ func (r *PortForwardReconciler) executeOperations(ctx context.Context, operation
 			return result, fmt.Errorf("operation failed: %v", err)
 		} else {
 			completedOperations = append(completedOperations, op)
-			logger := log.FromContext(ctx)
+			logger := ctrllog.FromContext(ctx)
 			logger.Info("Operation completed successfully",
 				"operation", op.String())
 		}
 	}
 
-	logger := log.FromContext(ctx)
+	logger := ctrllog.FromContext(ctx)
 	logger.Info("All operations completed successfully",
 		"created_count", len(result.Created),
 		"updated_count", len(result.Updated),
@@ -190,7 +215,7 @@ func (r *PortForwardReconciler) executeOperations(ctx context.Context, operation
 
 // rollbackOperations attempts to rollback completed operations
 func (r *PortForwardReconciler) rollbackOperations(ctx context.Context, operations []PortOperation) error {
-	log.FromContext(ctx).Info("Rolling back completed operations",
+	ctrllog.FromContext(ctx).Info("Rolling back completed operations",
 		"operation_count", len(operations))
 
 	// Rollback in reverse order
@@ -223,7 +248,7 @@ func (r *PortForwardReconciler) rollbackOperations(ctx context.Context, operatio
 		}
 
 		if err != nil {
-			logger := log.FromContext(ctx)
+			logger := ctrllog.FromContext(ctx)
 			logger.Error(err, "Rollback operation failed",
 				"operation", op.String())
 			// Continue with other rollback operations

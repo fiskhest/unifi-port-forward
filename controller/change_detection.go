@@ -73,7 +73,7 @@ func analyzeChanges(oldSvc, newSvc *corev1.Service) *ChangeContext {
 		}
 	}
 
-	// Port spec changes
+	// Port spec changes - detect changes in service port specifications
 	oldPorts := oldSvc.Spec.Ports
 	newPorts := newSvc.Spec.Ports
 	if !reflect.DeepEqual(oldPorts, newPorts) {
@@ -89,6 +89,7 @@ func analyzePortChanges(oldPorts, newPorts []corev1.ServicePort) []PortChangeDet
 	var changes []PortChangeDetail
 
 	// Create maps for comparison - use name+protocol as key to detect port number changes
+	// This allows detection when port numbers change but name/protocol remain the same
 	oldPortMap := make(map[string]corev1.ServicePort)
 	newPortMap := make(map[string]corev1.ServicePort)
 
@@ -138,12 +139,8 @@ func analyzePortChanges(oldPorts, newPorts []corev1.ServicePort) []PortChangeDet
 	return changes
 }
 
-// portKey creates a unique key for a service port
-func portKey(port corev1.ServicePort) string {
-	return fmt.Sprintf("%s-%d-%s", port.Name, port.Port, port.Protocol)
-}
-
 // portKeyByName creates a key for a service port using only name and protocol (to detect port number changes)
+// This excludes the port number to detect when port numbers change across service updates
 func portKeyByName(port corev1.ServicePort) string {
 	return fmt.Sprintf("%s-%s", port.Name, port.Protocol)
 }

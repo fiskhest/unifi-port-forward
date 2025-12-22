@@ -15,7 +15,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/log"
+	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 // PortForwardReconciler reconciles Service resources
@@ -50,7 +50,7 @@ func (r *PortForwardReconciler) updateDestinationIPs(ctx context.Context, servic
 		// Update config with new IP
 		config.DstIP = newIP
 
-		portLogger := log.FromContext(ctx).WithValues(
+		portLogger := ctrllog.FromContext(ctx).WithValues(
 			"dst_port", config.DstPort,
 			"new_ip", newIP,
 		)
@@ -70,7 +70,7 @@ func (r *PortForwardReconciler) updateDestinationIPs(ctx context.Context, servic
 
 // Reconcile implements the reconciliation logic for Service resources
 func (r *PortForwardReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	logger := log.FromContext(ctx).WithValues("namespace", req.Namespace, "name", req.Name)
+	logger := ctrllog.FromContext(ctx).WithValues("namespace", req.Namespace, "name", req.Name)
 
 	// Fetch the Service instance
 	service := &corev1.Service{}
@@ -121,12 +121,12 @@ func (r *PortForwardReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 
 // handleServiceDeletion handles service deletion cleanup
 func (r *PortForwardReconciler) handleServiceDeletion(ctx context.Context, namespacedName client.ObjectKey) (ctrl.Result, error) {
-	log.FromContext(ctx).Info("Handling service deletion - cleaning up all port forward rules")
+	ctrllog.FromContext(ctx).Info("Handling service deletion - cleaning up all port forward rules")
 
 	// Get current port forward rules
 	currentRules, err := r.Router.ListAllPortForwards(ctx)
 	if err != nil {
-		log.FromContext(ctx).Error(err, "Failed to list current port forwards for cleanup")
+		ctrllog.FromContext(ctx).Error(err, "Failed to list current port forwards for cleanup")
 		return ctrl.Result{}, err
 	}
 
@@ -148,17 +148,17 @@ func (r *PortForwardReconciler) handleServiceDeletion(ctx context.Context, names
 			}
 
 			if err := r.Router.RemovePort(ctx, config); err != nil {
-				log.FromContext(ctx).Error(err, "Failed to remove port forward rule during service deletion",
+				ctrllog.FromContext(ctx).Error(err, "Failed to remove port forward rule during service deletion",
 					"port", config.DstPort)
 			} else {
 				removedCount++
-				log.FromContext(ctx).Info("Removed port forward rule during service deletion",
+				ctrllog.FromContext(ctx).Info("Removed port forward rule during service deletion",
 					"port", config.DstPort)
 			}
 		}
 	}
 
-	log.FromContext(ctx).Info("Service deletion cleanup completed",
+	ctrllog.FromContext(ctx).Info("Service deletion cleanup completed",
 		"removed_count", removedCount)
 
 	return ctrl.Result{}, nil
@@ -174,14 +174,14 @@ func (r *PortForwardReconciler) shouldProcessService(ctx context.Context, servic
 	_, hasPortAnnotation := annotations[config.FilterAnnotation]
 	if !hasPortAnnotation {
 		// Note: Using Info with V(1) instead of Debug since logr doesn't have Debug
-		log.FromContext(ctx).V(1).Info(
+		ctrllog.FromContext(ctx).V(1).Info(
 			fmt.Sprintf("Service %s/%s does not contain FilterAnnotation %s", service.Namespace, service.Name, config.FilterAnnotation),
 		)
 		return false
 	}
 
 	if lbIP == "" {
-		log.FromContext(ctx).V(1).Info(
+		ctrllog.FromContext(ctx).V(1).Info(
 			fmt.Sprintf("Service %s/%s has no LoadBalancer IP assigned", service.Namespace, service.Name),
 		)
 		return false
@@ -192,7 +192,7 @@ func (r *PortForwardReconciler) shouldProcessService(ctx context.Context, servic
 
 // processAllChanges handles the unified processing of all service changes
 func (r *PortForwardReconciler) processAllChanges(ctx context.Context, service *corev1.Service, changeContext *ChangeContext) (ctrl.Result, error) {
-	logger := log.FromContext(ctx).WithValues(
+	logger := ctrllog.FromContext(ctx).WithValues(
 		"namespace", service.Namespace,
 		"name", service.Name,
 	)
