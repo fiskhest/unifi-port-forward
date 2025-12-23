@@ -164,6 +164,34 @@ If you have existing single-port services:
 
 ## Development
 
+## CLI Commands
+
+The `kube-port-forward-controller` provides three commands:
+
+### controller (default)
+Run Kubernetes controller for automatic port forwarding:
+```bash
+./kube-port-forward-controller controller
+# or simply
+./kube-port-forward-controller
+```
+
+### debug
+Monitor Kubernetes services for debugging purposes:
+```bash
+./kube-port-forward-controller debug --namespace=default --labels=app=web
+```
+
+### clean
+Clean up specific port forwarding rules:
+```bash
+./kube-port-forward-controller clean --port-mappings="83:192.168.27.130"
+```
+
+For detailed cleaner documentation, see [pkg/cleaner/README.md](pkg/cleaner/README.md).
+
+## Building and Running
+
 ### Building
 ```bash
 go build -o kube-port-forward-controller
@@ -182,7 +210,7 @@ export UNIFI_USERNAME="admin"
 export UNIFI_PASSWORD="password"
 export UNIFI_SITE="default"
 
-# Run the controller
+# Run the controller (default command)
 ./kube-port-forward-controller
 ```
 

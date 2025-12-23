@@ -9,6 +9,9 @@ import (
 	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
 )
 
+// PortForward aliases unifi.PortForward for external access
+// type PortForward = unifi.PortForward
+
 type UnifiRouter struct {
 	SiteID string
 	Client unifi.Client
@@ -219,6 +222,10 @@ func (router *UnifiRouter) UpdatePort(ctx context.Context, port int, config Port
 	)
 
 	return nil
+}
+
+func (router *UnifiRouter) DeletePortForwardByID(ctx context.Context, ruleID string) error {
+	return router.Client.DeletePortForward(ctx, router.SiteID, ruleID)
 }
 
 func (router *UnifiRouter) ListAllPortForwards(ctx context.Context) ([]*unifi.PortForward, error) {

@@ -1,14 +1,18 @@
 package controller
 
 import (
+	"context"
+	"reflect"
 	"testing"
 	"time"
 
 	"kube-router-port-forward/testutils"
 
-	"github.com/filipowm/go-unifi/unifi"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
+	ctrl "sigs.k8s.io/controller-runtime"
 )
 
 // ControllerTestEnv provides a test environment for controller tests
@@ -16,6 +20,7 @@ type ControllerTestEnv struct {
 	MockRouter *testutils.MockRouter
 	Controller *PortForwardReconciler
 	Clock      *testutils.MockClock
+	FakeClient *testutils.FakeKubernetesClient
 }
 
 // NewControllerTestEnv creates a new test environment
@@ -27,15 +32,25 @@ func NewControllerTestEnv(t *testing.T) *ControllerTestEnv {
 	startTime := time.Date(2023, 1, 1, 12, 0, 0, 0, time.UTC)
 	mockClock := testutils.NewMockClock(startTime)
 
-	// Create controller
+	// Create scheme for controller runtime
+	scheme := runtime.NewScheme()
+	corev1.AddToScheme(scheme)
+
+	// Create simplified fake client for reconciliation testing
+	fakeClient := testutils.NewFakeKubernetesClient(t, scheme)
+
+	// Create controller with client assignment
 	controller := &PortForwardReconciler{
+		Client: fakeClient,
 		Router: mockRouter,
+		Scheme: scheme,
 	}
 
 	return &ControllerTestEnv{
 		MockRouter: mockRouter,
 		Controller: controller,
 		Clock:      mockClock,
+		FakeClient: fakeClient,
 	}
 }
 
@@ -80,46 +95,63 @@ func (env *ControllerTestEnv) CreateTestService(namespace, name string, annotati
 	return service
 }
 
-// CreateTestServiceWithPortAnnotation creates a test service with port forwarding annotation
-func (env *ControllerTestEnv) CreateTestServiceWithPortAnnotation(namespace, name, portAnnotation, lbIP string) *corev1.Service {
-	annotations := map[string]string{
-		"kube-port-forward-controller/ports": portAnnotation,
+// CreateService adds a service to the fake Kubernetes client
+func (env *ControllerTestEnv) CreateService(ctx context.Context, service *corev1.Service) error {
+	if env.FakeClient != nil {
+		return env.FakeClient.Create(ctx, service)
 	}
+	return nil
+}
 
-	ports := []corev1.ServicePort{
-		{
-			Name:     "http",
-			Port:     80,
-			Protocol: corev1.ProtocolTCP,
+// UpdateService updates a service in the fake Kubernetes client
+func (env *ControllerTestEnv) UpdateService(ctx context.Context, service *corev1.Service) error {
+	if env.FakeClient != nil {
+		return env.FakeClient.Update(ctx, service)
+	}
+	return nil
+}
+
+// DeleteService deletes a service from the fake Kubernetes client
+func (env *ControllerTestEnv) DeleteService(ctx context.Context, service *corev1.Service) error {
+	if env.FakeClient != nil {
+		return env.FakeClient.Delete(ctx, service)
+	}
+	return nil
+}
+
+// ReconcileService calls the controller's Reconcile method for a given service
+func (env *ControllerTestEnv) ReconcileService(service *corev1.Service) (ctrl.Result, error) {
+	req := ctrl.Request{
+		NamespacedName: types.NamespacedName{
+			Name:      service.Name,
+			Namespace: service.Namespace,
 		},
 	}
-
-	return env.CreateTestService(namespace, name, annotations, ports, lbIP)
+	return env.Controller.Reconcile(context.Background(), req)
 }
 
-// CreatePortForwardRule creates a mock port forward rule
-func (env *ControllerTestEnv) CreatePortForwardRule(name, dstIP, dstPort, fwdPort, protocol string) unifi.PortForward {
-	return unifi.PortForward{
-		ID:            "test-id-" + name,
-		Name:          name,
-		DestinationIP: dstIP,
-		DstPort:       dstPort,
-		FwdPort:       fwdPort,
-		Proto:         protocol,
-		Enabled:       true,
-		PfwdInterface: "wan",
-		Src:           "any",
+// AssertReconcileSuccess verifies that reconciliation succeeded with no requeue
+func (env *ControllerTestEnv) AssertReconcileSuccess(t *testing.T, result ctrl.Result, err error) {
+	if err != nil {
+		t.Errorf("Expected no error, got: %v", err)
+	}
+	if !reflect.DeepEqual(result, ctrl.Result{}) {
+		t.Errorf("Expected empty result (no requeue), got: %+v", result)
 	}
 }
 
-// AddPortForwardRule adds a port forward rule to mock router
-func (env *ControllerTestEnv) AddPortForwardRule(rule unifi.PortForward) {
-	env.MockRouter.AddPortForwardRule(rule)
-}
-
-// GetPortForwardCount returns the number of port forward rules
-func (env *ControllerTestEnv) GetPortForwardCount() int {
-	return env.MockRouter.GetPortForwardCount()
+// AssertReconcileError verifies that reconciliation returned expected error
+func (env *ControllerTestEnv) AssertReconcileError(t *testing.T, expectedErr string, result ctrl.Result, err error) {
+	if err == nil {
+		t.Error("Expected error, got nil")
+		return
+	}
+	if expectedErr != "" && err.Error() != expectedErr {
+		t.Errorf("Expected error '%s', got '%s'", expectedErr, err.Error())
+	}
+	if !reflect.DeepEqual(result, ctrl.Result{}) {
+		t.Errorf("Expected empty result (no requeue), got: %+v", result)
+	}
 }
 
 // AssertPortForwardRuleExists verifies a port forward rule exists
@@ -134,19 +166,4 @@ func (env *ControllerTestEnv) AssertPortForwardRuleDoesNotExist(t *testing.T, po
 	if env.MockRouter.HasPortForward(port, dstIP) {
 		t.Errorf("Expected port forward rule for port %s to %s to not exist", port, dstIP)
 	}
-}
-
-// AdvanceTime advances the mock clock
-func (env *ControllerTestEnv) AdvanceTime(d time.Duration) {
-	env.Clock.Advance(d)
-}
-
-// SetCurrentTime sets the mock clock to a specific time
-func (env *ControllerTestEnv) SetCurrentTime(t time.Time) {
-	env.Clock.SetTime(t)
-}
-
-// GetCurrentTime returns the current mock time
-func (env *ControllerTestEnv) GetCurrentTime() time.Time {
-	return env.Clock.Now()
 }
