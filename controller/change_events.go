@@ -142,7 +142,7 @@ func (ep *EventPublisher) PublishPortForwardFailedEvent(ctx context.Context, ser
 		ExternalPort:     externalPort,
 		Protocol:         protocol,
 		Reason:           reason,
-		Message:          fmt.Sprintf("%s", reason),
+		Message:          reason,
 		Error:            errorMsg,
 	}
 

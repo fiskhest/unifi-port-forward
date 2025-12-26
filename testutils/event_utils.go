@@ -355,7 +355,7 @@ func findSubstring(s, substr string) bool {
 	if len(substr) > len(s) {
 		return false
 	}
-	for i := 0; i <= len(s)-len(substr); i++ {
+	for i := range len(s) - len(substr) + 1 {
 		if s[i:i+len(substr)] == substr {
 			return true
 		}

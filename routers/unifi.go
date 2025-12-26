@@ -42,7 +42,6 @@ func CreateUnifiRouter(baseURL, username, password, site, apiKey string) (*Unifi
 	if err != nil {
 		return nil, err
 	}
-	defer client.Logout()
 
 	fmt.Printf("UniFi Controller Version: %s\n", client.Version())
 

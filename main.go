@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -287,7 +288,46 @@ func parsePortMappingsString(mappingsStr string) (map[string]string, error) {
 
 // loadPortMappingsFromFile loads port mappings from YAML or JSON file
 func loadPortMappingsFromFile(filename string) (map[string]string, error) {
-	data, err := os.ReadFile(filename)
+	// Validate filename
+	if filename == "" {
+		return nil, fmt.Errorf("filename cannot be empty")
+	}
+
+	// Security validation - check for path traversal attempts
+	cleanPath := filepath.Clean(filename)
+	if strings.Contains(cleanPath, "..") {
+		return nil, fmt.Errorf("path traversal not allowed: %s", filename)
+	}
+
+	// Get current working directory to restrict file access
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get current directory: %w", err)
+	}
+
+	// Resolve to absolute path
+	absPath, err := filepath.Abs(cleanPath)
+	if err != nil {
+		return nil, fmt.Errorf("invalid filename path: %w", err)
+	}
+
+	// Ensure the file is within current directory or allowed subdirectories
+	if !strings.HasPrefix(absPath, cwd) {
+		return nil, fmt.Errorf("access denied - file outside current directory: %s", filename)
+	}
+
+	// Additional check: ensure file exists and is readable
+	fileInfo, err := os.Stat(absPath)
+	if err != nil {
+		return nil, fmt.Errorf("file not accessible: %w", err)
+	}
+
+	// Ensure it's a regular file, not a directory or special file
+	if !fileInfo.Mode().IsRegular() {
+		return nil, fmt.Errorf("not a regular file: %s", filename)
+	}
+
+	data, err := os.ReadFile(absPath) // #nosec G304 - validated above for security
 	if err != nil {
 		return nil, fmt.Errorf("failed to read file: %w", err)
 	}

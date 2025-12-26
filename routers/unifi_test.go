@@ -79,23 +79,10 @@ func TestPortConfig_Validation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Basic validation checks
-			isValid := true
-
-			if tt.config.Name == "" {
-				isValid = false
-			}
-
-			if tt.config.DstIP == "" {
-				isValid = false
-			}
-
-			if tt.config.Protocol != "tcp" && tt.config.Protocol != "udp" {
-				isValid = false
-			}
-
-			if tt.config.DstPort <= 0 || tt.config.DstPort > 65535 {
-				isValid = false
-			}
+			isValid := tt.config.Name != "" &&
+				tt.config.DstIP != "" &&
+				(tt.config.Protocol == "tcp" || tt.config.Protocol == "udp") &&
+				tt.config.DstPort > 0 && tt.config.DstPort <= 65535
 
 			if isValid != tt.valid {
 				t.Errorf("Expected validity %v, got %v", tt.valid, isValid)

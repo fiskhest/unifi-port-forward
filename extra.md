@@ -3,26 +3,8 @@
 
 --- now ---
 
-- [x] move to spf13/cobra + flags and env vars builtin handling, add parsing in config
-  - do subcmds work?
-    - [x] make cleaner take input by flag instead of hardcoded
-  - [ ] verify
-  - [x] merge in cmd/service-debugger as subcmd too
-
-- [x] remove builtin "node/transient IP" handling
-  - [x] helpers/helpers.go isNodeIP()
-
-- [x] are finalizers implemented
-  - [ ] and working correctly?
-- [x] tests for ensuring finalizer works
-
--- soon ---
-- update PLAN.md
-
-- [x] should main_test.go be moved elsewhere in the structure? It doesnt look like its shadowing main.go
-- [x] why simple_test.go? Can we unify it somewhere?
-
-- [x] CLI validateIP helper should use real ip parsing instead of strings.Contains etc
+move most packages under reporoot/pkg/
+update imports^
 
 --- verification ---
 

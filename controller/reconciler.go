@@ -21,8 +21,6 @@ import (
 	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
 )
 
-var logger = ctrllog.Log.WithName("controller")
-
 // PortForwardReconciler reconciles Service resources
 type PortForwardReconciler struct {
 	client.Client

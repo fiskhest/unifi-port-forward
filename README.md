@@ -219,6 +219,40 @@ export UNIFI_SITE="default"
 ./kube-port-forward-controller
 ```
 
+## Code Quality
+
+### Formatting
+```bash
+# Check formatting issues (non-vendor files only)
+find . -name "*.go" -not -path "./vendor/*" | xargs gofmt -l
+
+# Auto-fix formatting
+gofmt -w .
+```
+
+### Linting
+```bash
+# Quick lint check
+golangci-lint run ./...
+
+# Run all linters with maximum issue detection
+golangci-lint run --max-issues-per-linter=0 --max-same-issues=0 ./...
+
+# Security-focused linting
+golangci-lint run --enable-only=gosec,errcheck,staticcheck ./...
+
+# Auto-fix available issues
+golangci-lint run --fix ./...
+```
+
+### Pre-commit Check
+```bash
+# Complete code quality check before committing
+gofmt -l .
+golangci-lint run ./...
+go test -v ./...
+```
+
 ## Configuration
 
 ### Environment Variables

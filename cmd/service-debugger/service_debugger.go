@@ -415,11 +415,8 @@ func (d *ServiceDebugger) startStatusChecker() {
 	ticker := time.NewTicker(d.Config.PollInterval)
 	defer ticker.Stop()
 
-	for {
-		select {
-		case <-ticker.C:
-			d.checkAllServices()
-		}
+	for range ticker.C {
+		d.checkAllServices()
 	}
 }
 

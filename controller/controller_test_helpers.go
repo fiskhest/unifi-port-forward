@@ -34,7 +34,9 @@ func NewControllerTestEnv(t *testing.T) *ControllerTestEnv {
 
 	// Create scheme for controller runtime
 	scheme := runtime.NewScheme()
-	corev1.AddToScheme(scheme)
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatalf("Failed to add core v1 to scheme: %v", err)
+	}
 
 	// Create simplified fake client for reconciliation testing
 	fakeClient := testutils.NewFakeKubernetesClient(t, scheme)

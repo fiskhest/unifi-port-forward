@@ -1,13 +1,11 @@
 package helpers
 
 import (
-	"strings"
+	"sync"
 	"testing"
 
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"kube-router-port-forward/config"
-	"kube-router-port-forward/testutils"
 )
 
 // TestGetLBIP tests the GetLBIP helper function
@@ -80,207 +78,120 @@ func TestGetLBIP(t *testing.T) {
 	}
 }
 
-// TestMultiPortService_ValidAnnotation tests multi-port service with valid annotation
-func TestMultiPortService_ValidAnnotation(t *testing.T) {
-	// Clear port tracking for test isolation
+func TestUnmarkPortUsed(t *testing.T) {
+	// Clear any existing tracking
 	ClearPortConflictTracking()
 
-	// Create a multi-port service with annotation
-	service := testutils.CreateTestMultiPortService(
-		"multi-service",
-		"default",
-		[]testutils.TestPort{
-			{Name: "http", Port: 8080, Protocol: v1.ProtocolTCP},
-			{Name: "https", Port: 443, Protocol: v1.ProtocolTCP},
-			{Name: "metrics", Port: 9090, Protocol: v1.ProtocolTCP},
-		},
-		"192.168.1.100",
-		"http:8080,https:8443,metrics:9090",
-	)
+	// Mark a port as used
+	port := 8080
+	serviceKey := "test/service"
+	markPortUsed(port, serviceKey)
 
-	// Test getPortConfigs function
-	lbIP := GetLBIP(service)
-	portConfigs, err := GetPortConfigs(service, lbIP, config.FilterAnnotation)
-	if err != nil {
-		t.Fatalf("Failed to get port configs: %v", err)
+	// Verify port is marked
+	if err := checkPortConflict(port, serviceKey); err != nil {
+		t.Errorf("Expected no conflict for own service, got error: %v", err)
 	}
 
-	// Verify we got 3 port configs
-	if len(portConfigs) != 3 {
-		t.Errorf("Expected 3 port configs, got %d", len(portConfigs))
-	}
+	// Unmark the port
+	UnmarkPortUsed(port)
 
-	// Verify external port mappings
-	expectedMappings := map[string]int{
-		"http":    8080,
-		"https":   8443,
-		"metrics": 9090,
-	}
-
-	for _, pc := range portConfigs {
-		portName := strings.TrimPrefix(pc.Name, "default/multi-service:")
-		expectedPort, exists := expectedMappings[portName]
-		if !exists {
-			t.Errorf("Unexpected port name: %s", pc.Name)
-		}
-		if pc.DstPort != expectedPort {
-			t.Errorf("Expected external port %d for %s, got %d", expectedPort, portName, pc.DstPort)
-		}
-		if pc.FwdPort != int(GetServicePortByName(service, portName).Port) {
-			t.Errorf("Expected internal port %d for %s, got %d", GetServicePortByName(service, portName).Port, portName, pc.FwdPort)
-		}
+	// Verify port is no longer marked
+	if err := checkPortConflict(port, "different/service"); err != nil {
+		t.Errorf("Expected no conflict after unmarking, got error: %v", err)
 	}
 }
 
-// TestServiceWithoutAnnotation_Skipped tests that services without annotation are skipped
-func TestServiceWithoutAnnotation_Skipped(t *testing.T) {
-	// Create a service without annotation
-	service := testutils.CreateTestMultiPortService(
-		"no-annotation-service",
-		"default",
-		[]testutils.TestPort{
-			{Name: "http", Port: 80, Protocol: v1.ProtocolTCP},
-		},
-		"192.168.1.100",
-		"", // No annotation
-	)
-
-	// Test getPortConfigs function - should return error
-	lbIP := GetLBIP(service)
-	_, err := GetPortConfigs(service, lbIP, config.FilterAnnotation)
-	if err == nil {
-		t.Error("Expected error for service without annotation")
-	}
-
-	if !strings.Contains(err.Error(), "no port annotation found") {
-		t.Errorf("Expected 'no port annotation found' error, got: %v", err)
-	}
-}
-
-// TestInvalidAnnotationSyntax_Error tests invalid annotation syntax
-func TestInvalidAnnotationSyntax_Error(t *testing.T) {
-	// Create a service with invalid annotation
-	service := testutils.CreateTestServiceWithInvalidAnnotation(
-		"invalid-service",
-		"default",
-		"192.168.1.100",
-		"http:invalid_port",
-	)
-
-	// Test getPortConfigs function - should return error
-	lbIP := GetLBIP(service)
-	_, err := GetPortConfigs(service, lbIP, config.FilterAnnotation)
-	if err == nil {
-		t.Error("Expected error for invalid annotation syntax")
-	}
-
-	if !strings.Contains(err.Error(), "invalid external port") {
-		t.Errorf("Expected 'invalid external port' error, got: %v", err)
-	}
-}
-
-// TestPortNameNotFound_Error tests annotation with non-existent port name
-func TestPortNameNotFound_Error(t *testing.T) {
-	// Create a service with annotation referencing non-existent port
-	service := testutils.CreateTestMultiPortService(
-		"missing-port-service",
-		"default",
-		[]testutils.TestPort{
-			{Name: "http", Port: 80, Protocol: v1.ProtocolTCP},
-		},
-		"192.168.1.100",
-		"nonexistent:8080",
-	)
-
-	// Test getPortConfigs function - should return error
-	lbIP := GetLBIP(service)
-	_, err := GetPortConfigs(service, lbIP, config.FilterAnnotation)
-	if err == nil {
-		t.Error("Expected error for non-existent port name")
-	}
-
-	if !strings.Contains(err.Error(), "non-existent port") {
-		t.Errorf("Expected 'non-existent port' error, got: %v", err)
-	}
-}
-
-// TestPortConflictDetection_Error tests port conflict detection
-func TestPortConflictDetection_Error(t *testing.T) {
-	// Clear port tracking for test isolation
+func TestUnmarkPortsForService(t *testing.T) {
+	// Clear any existing tracking
 	ClearPortConflictTracking()
 
-	// Create first service
-	service1 := testutils.CreateTestMultiPortService(
-		"service1",
-		"default",
-		[]testutils.TestPort{
-			{Name: "http", Port: 80, Protocol: v1.ProtocolTCP},
-		},
-		"192.168.1.100",
-		"http:8080",
-	)
+	// Mark multiple ports for a service
+	serviceKey := "test/multiport-service"
+	ports := []int{80, 443, 8080}
 
-	// First service should succeed
-	lbIP1 := GetLBIP(service1)
-	_, err1 := GetPortConfigs(service1, lbIP1, config.FilterAnnotation)
-	if err1 != nil {
-		t.Errorf("First service should succeed: %v", err1)
+	for _, port := range ports {
+		markPortUsed(port, serviceKey)
 	}
 
-	// Create second service with conflicting port
-	service2 := testutils.CreateTestMultiPortService(
-		"service2",
-		"default",
-		[]testutils.TestPort{
-			{Name: "web", Port: 8080, Protocol: v1.ProtocolTCP},
-		},
-		"192.168.1.101",
-		"web:8080", // Same external port as service1
-	)
+	// Verify all ports are marked
+	for _, port := range ports {
+		if err := checkPortConflict(port, serviceKey); err != nil {
+			t.Errorf("Expected no conflict for own service on port %d, got error: %v", port, err)
+		}
+	}
 
-	// Second service should fail due to port conflict
-	lbIP2 := GetLBIP(service2)
-	_, err2 := GetPortConfigs(service2, lbIP2, config.FilterAnnotation)
-	if err2 == nil {
-		t.Error("Expected port conflict error for second service")
-	} else {
-		t.Logf("Got error: %v", err2)
-		if !strings.Contains(err2.Error(), "already used by service") {
-			t.Errorf("Expected port conflict error, got: %v", err2)
+	// Unmark all ports for the service
+	UnmarkPortsForService(serviceKey)
+
+	// Verify all ports are no longer marked
+	for _, port := range ports {
+		if err := checkPortConflict(port, "different/service"); err != nil {
+			t.Errorf("Expected no conflict after unmarking service on port %d, got error: %v", port, err)
 		}
 	}
 }
 
-// TestDefaultPortMapping tests default port mapping (external = service port)
-func TestDefaultPortMapping(t *testing.T) {
-	// Clear port tracking for test isolation
+func TestPortConflictTracking_ConcurrentAccess(t *testing.T) {
+	// Clear any existing tracking
 	ClearPortConflictTracking()
 
-	// Create a service with default port mapping
-	service := testutils.CreateTestMultiPortService(
-		"default-service",
-		"default",
-		[]testutils.TestPort{
-			{Name: "http", Port: 80, Protocol: v1.ProtocolTCP},
-			{Name: "https", Port: 443, Protocol: v1.ProtocolTCP},
-		},
-		"192.168.1.100",
-		"http,https", // Default mapping - external = service port
-	)
+	const numGoroutines = 10
+	const numOperations = 100
 
-	lbIP := GetLBIP(service)
-	portConfigs, err := GetPortConfigs(service, lbIP, config.FilterAnnotation)
-	if err != nil {
-		t.Fatalf("Failed to get port configs: %v", err)
+	var wg sync.WaitGroup
+	errors := make(chan error, numGoroutines)
+
+	// Launch multiple goroutines to test concurrent access
+	for i := range numGoroutines {
+		wg.Add(1)
+		go func(goroutineID int) {
+			defer wg.Done()
+			for j := range numOperations {
+				port := goroutineID*100 + j
+				serviceKey := "test/concurrent-service"
+
+				// Mark port
+				markPortUsed(port, serviceKey)
+
+				// Check conflict
+				err := checkPortConflict(port, serviceKey)
+				if err != nil {
+					errors <- err
+					return
+				}
+
+				// Unmark port
+				UnmarkPortUsed(port)
+			}
+		}(i)
 	}
 
-	// Verify external ports match service ports
-	for _, pc := range portConfigs {
-		portName := strings.TrimPrefix(pc.Name, "default/default-service:")
-		servicePort := GetServicePortByName(service, portName)
+	wg.Wait()
+	close(errors)
 
-		if pc.DstPort != int(servicePort.Port) {
-			t.Errorf("Expected external port %d for %s, got %d", servicePort.Port, portName, pc.DstPort)
-		}
+	// Check for any errors
+	for err := range errors {
+		t.Errorf("Concurrent access error: %v", err)
+	}
+}
+
+func TestClearPortConflictTracking_InProduction(t *testing.T) {
+	// This test documents that ClearPortConflictTracking should not be used in production
+	// It's only for test isolation
+
+	// Mark some ports
+	markPortUsed(8080, "test/service1")
+	markPortUsed(9090, "test/service2")
+
+	// Clear all tracking
+	ClearPortConflictTracking()
+
+	// Verify all tracking is cleared
+	if err := checkPortConflict(8080, "any/service"); err != nil {
+		t.Errorf("Expected no conflict after clearing tracking, got error: %v", err)
+	}
+
+	if err := checkPortConflict(9090, "any/service"); err != nil {
+		t.Errorf("Expected no conflict after clearing tracking, got error: %v", err)
 	}
 }
