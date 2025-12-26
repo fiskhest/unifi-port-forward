@@ -50,6 +50,13 @@ func UnmarkPortUsed(externalPort int) {
 	delete(usedExternalPorts, externalPort)
 }
 
+// ResetPortTracking clears all external port tracking (for testing)
+func ResetPortTracking() {
+	portMutex.Lock()
+	defer portMutex.Unlock()
+	usedExternalPorts = make(map[int]string)
+}
+
 // ClearPortConflictTracking clears all port tracking (for testing only)
 // This function should NOT be used in production code
 func ClearPortConflictTracking() {

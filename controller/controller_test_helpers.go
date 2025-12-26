@@ -2,7 +2,9 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -168,4 +170,128 @@ func (env *ControllerTestEnv) AssertPortForwardRuleDoesNotExist(t *testing.T, po
 	if env.MockRouter.HasPortForward(port, dstIP) {
 		t.Errorf("Expected port forward rule for port %s to %s to not exist", port, dstIP)
 	}
+}
+
+// CreateServiceWithNameChange creates a service, then simulates a name change
+func (env *ControllerTestEnv) CreateServiceWithNameChange(ctx context.Context, namespace, oldName, newName string, annotations map[string]string, ports []corev1.ServicePort, lbIP string) (*corev1.Service, *corev1.Service) {
+	// Create initial service
+	oldService := env.CreateTestService(namespace, oldName, annotations, ports, lbIP)
+	if err := env.CreateService(ctx, oldService); err != nil {
+		panic(fmt.Sprintf("Failed to create initial service: %v", err))
+	}
+
+	// Create updated service with new name (simulate rename)
+	newService := oldService.DeepCopy()
+	newService.Name = newName
+	newService.ResourceVersion = "2" // Simulate resource version change
+
+	return oldService, newService
+}
+
+// SimulateControllerStartupWithExistingRules simulates controller startup scenario
+func (env *ControllerTestEnv) SimulateControllerStartupWithExistingRules(services []*corev1.Service) error {
+	ctx := context.Background()
+
+	// First, create all services to simulate pre-existing annotated services
+	for _, service := range services {
+		if err := env.CreateService(ctx, service); err != nil {
+			return fmt.Errorf("failed to create service %s/%s: %w", service.Namespace, service.Name, err)
+		}
+	}
+
+	// Simulate controller startup by reconciling all services
+	for _, service := range services {
+		if _, err := env.ReconcileService(service); err != nil {
+			return fmt.Errorf("failed to reconcile service %s/%s during startup: %w", service.Namespace, service.Name, err)
+		}
+	}
+
+	return nil
+}
+
+// AssertRuleExistsByName verifies a port forward rule exists by its name
+func (env *ControllerTestEnv) AssertRuleExistsByName(t *testing.T, ruleName string) {
+	rule := env.MockRouter.GetPortForwardRuleByName(ruleName)
+	if rule == nil {
+		t.Errorf("Expected port forward rule with name '%s' to exist", ruleName)
+	}
+}
+
+// AssertRuleDoesNotExistByName verifies a port forward rule does not exist by its name
+func (env *ControllerTestEnv) AssertRuleDoesNotExistByName(t *testing.T, ruleName string) {
+	rule := env.MockRouter.GetPortForwardRuleByName(ruleName)
+	if rule != nil {
+		t.Errorf("Expected port forward rule with name '%s' to not exist, but found rule for port %s to %s",
+			ruleName, rule.DstPort, rule.Fwd)
+	}
+}
+
+// AssertRulesWithPrefixExist verifies that rules with given prefix exist
+func (env *ControllerTestEnv) AssertRulesWithPrefixExist(t *testing.T, prefix string, expectedCount int) {
+	rules := env.MockRouter.GetPortForwardNames()
+	var matchingRules []string
+
+	for _, name := range rules {
+		if strings.HasPrefix(name, prefix) {
+			matchingRules = append(matchingRules, name)
+		}
+	}
+
+	if len(matchingRules) != expectedCount {
+		t.Errorf("Expected %d rules with prefix '%s', but found %d: %v",
+			expectedCount, prefix, len(matchingRules), matchingRules)
+	}
+}
+
+// AssertRulesWithPrefixDoNotExist verifies that no rules with given prefix exist
+func (env *ControllerTestEnv) AssertRulesWithPrefixDoNotExist(t *testing.T, prefix string) {
+	env.AssertRulesWithPrefixExist(t, prefix, 0)
+}
+
+// GetRuleNamesWithPrefix returns rule names that start with given prefix
+func (env *ControllerTestEnv) GetRuleNamesWithPrefix(prefix string) []string {
+	rules := env.MockRouter.GetPortForwardNames()
+	var matchingRules []string
+
+	for _, name := range rules {
+		if strings.HasPrefix(name, prefix) {
+			matchingRules = append(matchingRules, name)
+		}
+	}
+
+	return matchingRules
+}
+
+// CreateTestServiceList creates multiple test services with given parameters
+func (env *ControllerTestEnv) CreateTestServiceList(services []struct {
+	Name        string
+	Namespace   string
+	Annotations map[string]string
+	Ports       []corev1.ServicePort
+	LBIP        string
+}) []*corev1.Service {
+	var result []*corev1.Service
+
+	for _, svc := range services {
+		service := env.CreateTestService(svc.Namespace, svc.Name, svc.Annotations, svc.Ports, svc.LBIP)
+		result = append(result, service)
+	}
+
+	return result
+}
+
+// UpdateServiceInPlace updates an existing service in the fake client
+func (env *ControllerTestEnv) UpdateServiceInPlace(ctx context.Context, service *corev1.Service) error {
+	return env.UpdateService(ctx, service)
+}
+
+// DeleteServiceByName deletes a service by namespace and name
+func (env *ControllerTestEnv) DeleteServiceByName(ctx context.Context, namespace, name string) error {
+	service := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+		},
+	}
+	return env.DeleteService(ctx, service)
 }

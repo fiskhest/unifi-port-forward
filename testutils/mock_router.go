@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/filipowm/go-unifi/unifi"
@@ -12,20 +13,22 @@ import (
 
 // MockRouter implements routers.Router interface for testing
 type MockRouter struct {
-	mu           sync.RWMutex
-	PortForwards []unifi.PortForward
-	shouldFail   bool
-	failCount    int
-	callCount    map[string]int
+	mu                sync.RWMutex
+	PortForwards      []unifi.PortForward
+	shouldFail        bool
+	failCount         int
+	callCount         map[string]int
+	simulatedFailures map[string]bool
 }
 
 // NewMockRouter creates a new mock router
 func NewMockRouter() *MockRouter {
 	return &MockRouter{
-		PortForwards: make([]unifi.PortForward, 0),
-		shouldFail:   false,
-		failCount:    0,
-		callCount:    make(map[string]int),
+		PortForwards:      make([]unifi.PortForward, 0),
+		shouldFail:        false,
+		failCount:         0,
+		callCount:         make(map[string]int),
+		simulatedFailures: make(map[string]bool),
 	}
 }
 
@@ -64,7 +67,7 @@ func (r *MockRouter) AddPort(ctx context.Context, config routers.PortConfig) err
 	defer r.mu.Unlock()
 	r.callCount["AddPort"]++
 
-	if r.shouldFail {
+	if r.shouldFail { // Temporarily disable simulated failure logic
 		r.failCount++
 		return fmt.Errorf("simulated AddPort failure")
 	}
@@ -73,8 +76,9 @@ func (r *MockRouter) AddPort(ctx context.Context, config routers.PortConfig) err
 	pf := unifi.PortForward{
 		ID:            fmt.Sprintf("mock-id-%d", len(r.PortForwards)+1),
 		Name:          config.Name,
-		DestinationIP: config.DstIP,
+		DestinationIP: "any",
 		DstPort:       strconv.Itoa(config.DstPort),
+		Fwd:           config.DstIP,
 		FwdPort:       strconv.Itoa(config.FwdPort),
 		Proto:         config.Protocol,
 		Enabled:       config.Enabled,
@@ -122,7 +126,7 @@ func (r *MockRouter) RemovePort(ctx context.Context, config routers.PortConfig) 
 	defer r.mu.Unlock()
 	r.callCount["RemovePort"]++
 
-	if r.shouldFail {
+	if r.shouldFail || r.ShouldOperationFail("RemovePort") {
 		r.failCount++
 		return fmt.Errorf("simulated RemovePort failure")
 	}
@@ -152,13 +156,14 @@ func (r *MockRouter) UpdatePort(ctx context.Context, port int, config routers.Po
 
 	portStr := strconv.Itoa(port)
 	for i, pf := range r.PortForwards {
-		if pf.DstPort == portStr && pf.DestinationIP == config.DstIP {
-			// Update existing rule
+		if pf.DstPort == portStr {
+			// Update existing rule (match by port only, since we might be changing IP)
 			r.PortForwards[i] = unifi.PortForward{
 				ID:            pf.ID,
 				Name:          config.Name,
-				DestinationIP: config.DstIP,
+				DestinationIP: "any",
 				DstPort:       strconv.Itoa(config.DstPort),
+				Fwd:           config.DstIP,
 				FwdPort:       strconv.Itoa(config.FwdPort),
 				Proto:         config.Protocol,
 				Enabled:       config.Enabled,
@@ -241,4 +246,103 @@ func (r *MockRouter) GetPortForwardRules() []unifi.PortForward {
 	result := make([]unifi.PortForward, len(r.PortForwards))
 	copy(result, r.PortForwards)
 	return result
+}
+
+// GetPortForwardRuleByName finds a port forward rule by its name
+func (r *MockRouter) GetPortForwardRuleByName(name string) *unifi.PortForward {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	r.callCount["GetPortForwardRuleByName"]++
+
+	for _, pf := range r.PortForwards {
+		if pf.Name == name {
+			return &pf
+		}
+	}
+	return nil
+}
+
+// ClearPortForwardsByPrefix removes all port forward rules whose names start with the given prefix
+func (r *MockRouter) ClearPortForwardsByPrefix(prefix string) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.callCount["ClearPortForwardsByPrefix"]++
+
+	originalCount := len(r.PortForwards)
+	var filtered []unifi.PortForward
+
+	for _, pf := range r.PortForwards {
+		if !strings.HasPrefix(pf.Name, prefix) {
+			filtered = append(filtered, pf)
+		}
+	}
+
+	r.PortForwards = filtered
+	removedCount := originalCount - len(r.PortForwards)
+	return removedCount
+}
+
+// GetPortForwardNames returns a list of all port forward rule names
+func (r *MockRouter) GetPortForwardNames() []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	r.callCount["GetPortForwardNames"]++
+
+	names := make([]string, len(r.PortForwards))
+	for i, pf := range r.PortForwards {
+		names[i] = pf.Name
+	}
+	return names
+}
+
+// ClearAllPortForwards removes all port forward rules
+func (r *MockRouter) ClearAllPortForwards() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.callCount["ClearAllPortForwards"]++
+	r.PortForwards = make([]unifi.PortForward, 0)
+}
+
+// SetSimulatedFailure controls failure for specific operations
+func (r *MockRouter) SetSimulatedFailure(operation string, shouldFail bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.callCount["SetSimulatedFailure"]++
+	if r.simulatedFailures == nil {
+		r.simulatedFailures = make(map[string]bool)
+	}
+	r.simulatedFailures[operation] = shouldFail
+}
+
+// ShouldOperationFail checks if an operation should fail
+func (r *MockRouter) ShouldOperationFail(operation string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	r.callCount["ShouldOperationFail"]++
+
+	if r.simulatedFailures == nil {
+		return false
+	}
+	return r.simulatedFailures[operation]
+}
+
+// GetOperationCounts returns a copy of operation counts
+func (r *MockRouter) GetOperationCounts() map[string]int {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	r.callCount["GetOperationCounts"]++
+
+	result := make(map[string]int)
+	for k, v := range r.callCount {
+		result[k] = v
+	}
+	return result
+}
+
+// ResetOperationCounts resets all operation counters
+func (r *MockRouter) ResetOperationCounts() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.callCount = make(map[string]int)
+	r.simulatedFailures = make(map[string]bool)
 }
