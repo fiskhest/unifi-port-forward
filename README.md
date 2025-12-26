@@ -166,7 +166,7 @@ If you have existing single-port services:
 
 ## CLI Commands
 
-The `kube-port-forward-controller` provides three commands:
+The `kube-port-forward-controller` provides four commands:
 
 ### controller (default)
 Run Kubernetes controller for automatic port forwarding:
@@ -178,8 +178,11 @@ Run Kubernetes controller for automatic port forwarding:
 
 ### debug
 Monitor Kubernetes services for debugging purposes:
+### service-debugger
+Monitor Kubernetes services for IP changes and debug LoadBalancer IP issues:
 ```bash
-./kube-port-forward-controller debug --namespace=default --labels=app=web
+./kube-port-forward-controller service-debugger --namespace=default --log-level=debug
+./kube-port-forward-controller service-debugger -labels="app=web" --output=json
 ```
 
 ### clean
@@ -188,7 +191,9 @@ Clean up specific port forwarding rules:
 ./kube-port-forward-controller clean --port-mappings="83:192.168.27.130"
 ```
 
-For detailed cleaner documentation, see [pkg/cleaner/README.md](pkg/cleaner/README.md).
+For detailed cleaner documentation, see [cmd/cleaner/README.md](cmd/cleaner/README.md).
+
+For detailed service-debugger documentation, see [cmd/service-debugger/README.md](cmd/service-debugger/README.md).
 
 ## Building and Running
 

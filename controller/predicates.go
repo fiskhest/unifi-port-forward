@@ -1,16 +1,17 @@
 package controller
 
 import (
-	"reflect"
+	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
+	"kube-router-port-forward/config"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 )
 
-// LoadBalancerIPChangedPredicate triggers reconciliation when LoadBalancer IPs change
-type LoadBalancerIPChangedPredicate struct{}
+// ServiceChangePredicate replaces the individual predicates with unified change detection
+type ServiceChangePredicate struct{}
 
-func (LoadBalancerIPChangedPredicate) Update(e event.UpdateEvent) bool {
+func (ServiceChangePredicate) Update(e event.UpdateEvent) bool {
 	oldSvc, ok := e.ObjectOld.(*corev1.Service)
 	if !ok {
 		return false
@@ -21,33 +22,84 @@ func (LoadBalancerIPChangedPredicate) Update(e event.UpdateEvent) bool {
 		return false
 	}
 
-	// Only trigger if service has our annotation
-	if !hasPortForwardAnnotation(newSvc) {
+	// Only process if service has/had port forwarding
+	if !hasPortForwardAnnotation(oldSvc) && !hasPortForwardAnnotation(newSvc) {
 		return false
 	}
 
-	// Check if LoadBalancer IPs have changed
-	return !loadBalancerIPsEqual(oldSvc, newSvc)
+	// Analyze what changed
+	changeContext := analyzeChanges(oldSvc, newSvc)
+
+	// Only trigger if relevant changes occurred
+	if !changeContext.HasRelevantChanges() {
+		return false
+	}
+
+	// Store change context in service annotation for reconciliation to use
+	if newSvc.Annotations == nil {
+		newSvc.Annotations = make(map[string]string)
+	}
+
+	contextJSON, err := serializeChangeContext(changeContext)
+	if err != nil {
+		// Log error but still trigger reconciliation
+		fmt.Printf("Warning: Failed to serialize change context: %v\n", err)
+		return true
+	}
+
+	newSvc.Annotations[ChangeContextAnnotationKey] = contextJSON
+	return true
 }
 
-func (LoadBalancerIPChangedPredicate) Create(e event.CreateEvent) bool {
+func (ServiceChangePredicate) Create(e event.CreateEvent) bool {
 	svc, ok := e.Object.(*corev1.Service)
 	if !ok {
 		return false
 	}
-	return hasPortForwardAnnotation(svc)
+
+	// Only process if service has port forwarding annotation
+	if !hasPortForwardAnnotation(svc) {
+		return false
+	}
+
+	// Create initial change context
+	changeContext := &ChangeContext{
+		ServiceKey:       fmt.Sprintf("%s/%s", svc.Namespace, svc.Name),
+		ServiceNamespace: svc.Namespace,
+		ServiceName:      svc.Name,
+		// This is a creation, not a change
+	}
+
+	// Store change context
+	if svc.Annotations == nil {
+		svc.Annotations = make(map[string]string)
+	}
+
+	contextJSON, err := serializeChangeContext(changeContext)
+	if err != nil {
+		fmt.Printf("Warning: Failed to serialize change context for create: %v\n", err)
+		return true
+	}
+
+	svc.Annotations[ChangeContextAnnotationKey] = contextJSON
+	return true
 }
 
-func (LoadBalancerIPChangedPredicate) Delete(e event.DeleteEvent) bool {
+func (ServiceChangePredicate) Delete(e event.DeleteEvent) bool {
 	svc, ok := e.Object.(*corev1.Service)
 	if !ok {
 		return false
 	}
-	return hasPortForwardAnnotation(svc)
+
+	// Only process if service had port forwarding annotation
+	if !hasPortForwardAnnotation(svc) {
+		return false
+	}
+
+	return true
 }
 
-func (LoadBalancerIPChangedPredicate) Generic(e event.GenericEvent) bool {
-	// We don't use generic events
+func (ServiceChangePredicate) Generic(e event.GenericEvent) bool {
 	return false
 }
 
@@ -57,70 +109,6 @@ func hasPortForwardAnnotation(service *corev1.Service) bool {
 	if annotations == nil {
 		return false
 	}
-	_, exists := annotations["kube-port-forward-controller/ports"]
+	_, exists := annotations[config.FilterAnnotation]
 	return exists
-}
-
-// loadBalancerIPsEqual compares LoadBalancer IPs between two services
-func loadBalancerIPsEqual(oldSvc, newSvc *corev1.Service) bool {
-	oldIPs := getLoadBalancerIPs(oldSvc)
-	newIPs := getLoadBalancerIPs(newSvc)
-	return reflect.DeepEqual(oldIPs, newIPs)
-}
-
-// getLoadBalancerIPs extracts LoadBalancer IPs from service status
-func getLoadBalancerIPs(service *corev1.Service) []string {
-	var ips []string
-	for _, ingress := range service.Status.LoadBalancer.Ingress {
-		if ingress.IP != "" {
-			ips = append(ips, ingress.IP)
-		}
-	}
-	return ips
-}
-
-// PortForwardAnnotationChangedPredicate triggers reconciliation when annotations change
-// for services that have or had the port forwarding annotation
-type PortForwardAnnotationChangedPredicate struct{}
-
-func (PortForwardAnnotationChangedPredicate) Update(e event.UpdateEvent) bool {
-	oldSvc, ok := e.ObjectOld.(*corev1.Service)
-	if !ok {
-		return false
-	}
-
-	newSvc, ok := e.ObjectNew.(*corev1.Service)
-	if !ok {
-		return false
-	}
-
-	// Only trigger if annotations actually changed
-	oldAnnotations := oldSvc.GetAnnotations()
-	newAnnotations := newSvc.GetAnnotations()
-	if reflect.DeepEqual(oldAnnotations, newAnnotations) {
-		return false
-	}
-
-	// Only trigger if at least one version has our annotation
-	return hasPortForwardAnnotation(oldSvc) || hasPortForwardAnnotation(newSvc)
-}
-
-func (PortForwardAnnotationChangedPredicate) Create(e event.CreateEvent) bool {
-	svc, ok := e.Object.(*corev1.Service)
-	if !ok {
-		return false
-	}
-	return hasPortForwardAnnotation(svc)
-}
-
-func (PortForwardAnnotationChangedPredicate) Delete(e event.DeleteEvent) bool {
-	svc, ok := e.Object.(*corev1.Service)
-	if !ok {
-		return false
-	}
-	return hasPortForwardAnnotation(svc)
-}
-
-func (PortForwardAnnotationChangedPredicate) Generic(e event.GenericEvent) bool {
-	return false
 }

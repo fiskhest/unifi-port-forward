@@ -1,4 +1,4 @@
-package debugger
+package servicedebugger
 
 import (
 	"context"
@@ -38,7 +38,7 @@ type IPChange struct {
 	OldIPs          []string  `json:"old_ips"`
 	NewIPs          []string  `json:"new_ips"`
 	ChangeType      string    `json:"change_type"` // "created", "updated", "deleted", "ip_changed"
-	IPType          string    `json:"ip_type"`     // "vip", "node", "mixed", "unknown"
+	IPType          string    `json:"ip_type"`     // "loadbalancer", "multiple", "unknown"
 	NumIngress      int       `json:"num_ingress"`
 	AnnotationValue string    `json:"annotation_value"`
 	Namespace       string    `json:"namespace"`
@@ -49,13 +49,14 @@ type IPChange struct {
 type ServiceDebugger struct {
 	client.Client
 	Scheme *runtime.Scheme
-	Config DebugConfig
+	Config ServiceDebuggerConfig
 }
 
-// DebugConfig holds configuration for the debugger
-type DebugConfig struct {
+// ServiceDebuggerConfig holds configuration for the debugger
+type ServiceDebuggerConfig struct {
 	Namespace     string
 	LabelSelector string
+	LogLevel      string
 	OutputFormat  string
 	HistorySize   int
 	PollInterval  time.Duration
@@ -65,7 +66,7 @@ type DebugConfig struct {
 var serviceStates = make(map[string]*ServiceState)
 
 // Run starts the service debugger
-func Run(config DebugConfig) error {
+func Run(config ServiceDebuggerConfig) error {
 	log.Printf("Starting Kubernetes Service IP Debugger (namespace=%s, labels=%s, output=%s)",
 		config.Namespace, config.LabelSelector, config.OutputFormat)
 
@@ -90,7 +91,7 @@ func Run(config DebugConfig) error {
 	}
 
 	// Create debugger
-	debugger := &ServiceDebugger{
+	d := &ServiceDebugger{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
 		Config: config,
@@ -100,12 +101,15 @@ func Run(config DebugConfig) error {
 	if err := ctrl.NewControllerManagedBy(mgr).
 		For(&corev1.Service{}).
 		Named("service-debugger").
-		Complete(debugger); err != nil {
+		Complete(d); err != nil {
 		return fmt.Errorf("failed to setup controller: %w", err)
 	}
 
 	// Setup graceful shutdown
 	setupGracefulShutdown()
+
+	// Start status checker goroutine
+	go d.startStatusChecker()
 
 	log.Println("Starting service debugger")
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
@@ -241,7 +245,7 @@ func (d *ServiceDebugger) handleServiceChange(service *corev1.Service) {
 		annotationChanged := oldAnnotationValue != annotationValue
 
 		// Log annotation changes or all updates in debug mode
-		if annotationChanged || d.Config.OutputFormat == "debug" {
+		if annotationChanged || d.Config.LogLevel == "debug" {
 			changeType := "updated"
 			if annotationChanged {
 				changeType = "annotation_changed"
@@ -300,36 +304,17 @@ func (d *ServiceDebugger) extractIPs(service *corev1.Service) []string {
 	return ips
 }
 
-// classifyIPs classifies IPs as VIP, node, or mixed
+// classifyIPs classifies IPs as loadbalancer, multiple, or unknown
 func (d *ServiceDebugger) classifyIPs(ips []string) string {
 	if len(ips) == 0 {
 		return "unknown"
 	}
 
 	if len(ips) > 1 {
-		return "mixed"
+		return "multiple"
 	}
 
-	ip := ips[0]
-	if d.isNodeIP(ip) {
-		return "node"
-	}
-	return "vip"
-}
-
-// isNodeIP detects if IP is a node IP (using same logic as main controller)
-func (d *ServiceDebugger) isNodeIP(ip string) bool {
-	nodeIPRanges := []string{
-		"192.168.27.", // Node IP range from main controller
-		// Add other node IP ranges as needed
-	}
-
-	for _, rangePrefix := range nodeIPRanges {
-		if len(ip) >= len(rangePrefix) && ip[:len(rangePrefix)] == rangePrefix {
-			return true
-		}
-	}
-	return false
+	return "loadbalancer"
 }
 
 // hasPortForwardAnnotation gets the port forwarding annotation value from service
@@ -408,11 +393,8 @@ func (d *ServiceDebugger) logChangeText(change IPChange) {
 	fmt.Printf("   ANNOTATIONS: kube-port-forward-controller/ports=%s\n", change.AnnotationValue)
 
 	// Add warnings for potential issues
-	if change.IPType == "mixed" {
+	if change.IPType == "multiple" {
 		fmt.Printf("   ⚠️  WARNING: Multiple IPs detected - may cause port forwarding issues\n")
-	}
-	if change.IPType == "node" && change.ChangeType != "deleted" {
-		fmt.Printf("   ℹ️  INFO: Node IP detected - may be transient, expecting VIP assignment\n")
 	}
 
 	fmt.Println()
@@ -426,6 +408,60 @@ func (d *ServiceDebugger) logChangeJSON(change IPChange) {
 		return
 	}
 	fmt.Println(string(data))
+}
+
+// startStatusChecker periodically checks service status for changes that might not trigger events
+func (d *ServiceDebugger) startStatusChecker() {
+	ticker := time.NewTicker(d.Config.PollInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			d.checkAllServices()
+		}
+	}
+}
+
+// checkAllServices checks all services for status changes
+func (d *ServiceDebugger) checkAllServices() {
+	services := &corev1.ServiceList{}
+
+	listOpts := []client.ListOption{}
+	if d.Config.Namespace != "" {
+		listOpts = append(listOpts, client.InNamespace(d.Config.Namespace))
+	}
+	if d.Config.LabelSelector != "" {
+		labelSelector, err := metav1.ParseToLabelSelector(d.Config.LabelSelector)
+		if err != nil {
+			log.Printf("Invalid label selector: %v", err)
+			return
+		}
+		selector, err := metav1.LabelSelectorAsSelector(labelSelector)
+		if err != nil {
+			log.Printf("Invalid label selector conversion: %v", err)
+			return
+		}
+		listOpts = append(listOpts, client.MatchingLabelsSelector{Selector: selector})
+	}
+
+	if err := d.List(context.Background(), services, listOpts...); err != nil {
+		log.Printf("Failed to list services: %v", err)
+		return
+	}
+
+	for _, service := range services.Items {
+		serviceKey := fmt.Sprintf("%s/%s", service.Namespace, service.Name)
+		if state, exists := serviceStates[serviceKey]; exists {
+			// Check for status changes that might not have triggered events
+			currentIPs := d.extractIPs(&service)
+			if !d.ipSlicesEqual(state.IPs, currentIPs) {
+				log.Printf("Status change detected: service=%s, old_ips=%v, new_ips=%v",
+					serviceKey, state.IPs, currentIPs)
+				d.handleServiceChange(&service)
+			}
+		}
+	}
 }
 
 // setupGracefulShutdown sets up signal handling

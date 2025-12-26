@@ -26,7 +26,10 @@ spec:
             - name: UNIFI_ROUTER_IP
               value: 192.168.27.1
             - name: UNIFI_PASSWORD
-              value: apa # TODO: DO NOT COMMIT
+              valueFrom:
+                secretKeyRef:
+                  name: unifi-credentials
+                  key: pass
             - name: DEBUG
               value: "True"
 ---

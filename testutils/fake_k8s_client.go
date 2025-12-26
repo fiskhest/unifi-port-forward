@@ -44,9 +44,10 @@ func (f *FakeKubernetesClient) Get(ctx context.Context, key client.ObjectKey, ob
 		return errors.NewNotFound(v1.Resource("services"), key.Name)
 	}
 
-	// Use reflection to copy the service to the provided object
-	srcValue := reflect.ValueOf(service).Elem()
+	// Use deep copy to avoid reference issues in tests
+	serviceCopy := service.DeepCopy()
 	dstValue := reflect.ValueOf(obj).Elem()
+	srcValue := reflect.ValueOf(serviceCopy).Elem()
 	dstValue.Set(srcValue)
 
 	return nil
@@ -62,8 +63,9 @@ func (f *FakeKubernetesClient) Create(ctx context.Context, obj client.Object, op
 		return fmt.Errorf("fake client only supports Service objects")
 	}
 
+	// Store a deep copy to avoid reference issues
 	key := fmt.Sprintf("%s/%s", service.Namespace, service.Name)
-	f.Services[key] = service
+	f.Services[key] = service.DeepCopy()
 	return nil
 }
 
@@ -77,8 +79,9 @@ func (f *FakeKubernetesClient) Update(ctx context.Context, obj client.Object, op
 		return fmt.Errorf("fake client only supports Service objects")
 	}
 
+	// Store a deep copy to avoid reference issues
 	key := fmt.Sprintf("%s/%s", service.Namespace, service.Name)
-	f.Services[key] = service
+	f.Services[key] = service.DeepCopy()
 	return nil
 }
 

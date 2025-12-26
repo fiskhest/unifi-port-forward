@@ -28,20 +28,6 @@ docker buildx bake --push
 ### controller
 - **Image**: `johrad/kube-router-port-forward:latest`
 - **Architecture**: `linux/amd64`
-- **Base**: `gcr.io/distroless/static:nonroot`
-- **Purpose**: Production Kubernetes controller
-
-### Local Development Tools
-
-The following tools are built locally with Go, not Docker:
-
-```bash
-# Service debugger (local only)
-go build -o service-debugger ./cmd/service-debugger
-
-# Cleaner utility (local only)
-go build -o cleaner ./cleaner
-```
 
 ## Build Features
 
@@ -55,7 +41,7 @@ go build -o cleaner ./cleaner
 
 The controller supports these environment variables:
 
-- `UNIFI_ROUTER_IP` - UniFi router IP (default: `192.168.27.1`)
+- `UNIFI_ROUTER_IP` - UniFi router IP (default: `192.168.1.1`)
 - `UNIFI_USERNAME` - UniFi username (default: `admin`)  
 - `UNIFI_PASSWORD` - UniFi password (required)
 - `UNIFI_SITE` - UniFi site (default: `default`)
@@ -64,7 +50,7 @@ The controller supports these environment variables:
 
 ```bash
 docker run --rm \
-  -e UNIFI_ROUTER_IP=192.168.27.1 \
+  -e UNIFI_ROUTER_IP=192.168.1.1 \
   -e UNIFI_USERNAME=admin \
   -e UNIFI_PASSWORD=mypassword \
   johrad/kube-router-port-forward:latest

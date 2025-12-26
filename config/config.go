@@ -6,12 +6,15 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"time"
 )
 
 // FilterAnnotation is the annotation key for enabling port forwarding
 const (
-	FilterAnnotation    = "kube-port-forward-controller/ports"
-	FinalizerAnnotation = "kube-port-forward-controller/finalizer"
+	FilterAnnotation          = "kube-port-forward-controller/ports"
+	FinalizerAnnotation       = "kube-port-forward-controller/finalizer"
+	CleanupStatusAnnotation   = "kube-port-forward-controller/cleanup-status"
+	CleanupAttemptsAnnotation = "kube-port-forward-controller/cleanup-attempts"
 )
 
 // Config holds the application configuration
@@ -26,6 +29,11 @@ type Config struct {
 	// Application Settings
 	Debug    bool   `env:"DEBUG" default:"false" json:"debug"`
 	LogLevel string `env:"LOG_LEVEL" default:"info" json:"logLevel"`
+
+	// Cleanup and finalizer settings
+	FinalizerMaxRetries    int           `env:"FINALIZER_MAX_RETRIES" default:"3" json:"finalizerMaxRetries"`
+	FinalizerRetryInterval time.Duration `env:"FINALIZER_RETRY_INTERVAL" default:"30s" json:"finalizerRetryInterval"`
+	CleanupTimeout         time.Duration `env:"CLEANUP_TIMEOUT" default:"5m" json:"cleanupTimeout"`
 
 	// Runtime values (derived from settings)
 	Host string `json:"-"`
@@ -94,28 +102,26 @@ func validateIP(ip string) error {
 
 // InitFromEnv initializes config from environment variables
 func InitFromEnv(cfg *Config) {
-	if cfg.RouterIP == "" {
-		cfg.RouterIP = os.Getenv("UNIFI_ROUTER_IP")
+	if envRouterIP := os.Getenv("UNIFI_ROUTER_IP"); envRouterIP != "" {
+		cfg.RouterIP = envRouterIP
 	}
-	if cfg.Username == "" {
-		cfg.Username = os.Getenv("UNIFI_USERNAME")
+	if envUsername := os.Getenv("UNIFI_USERNAME"); envUsername != "" {
+		cfg.Username = envUsername
 	}
-	if cfg.Password == "" {
-		cfg.Password = os.Getenv("UNIFI_PASSWORD")
+	if envPassword := os.Getenv("UNIFI_PASSWORD"); envPassword != "" {
+		cfg.Password = envPassword
 	}
-	if cfg.Site == "" {
-		cfg.Site = os.Getenv("UNIFI_SITE")
+	if envSite := os.Getenv("UNIFI_SITE"); envSite != "" {
+		cfg.Site = envSite
 	}
-	if cfg.APIKey == "" {
-		cfg.APIKey = os.Getenv("UNIFI_API_KEY")
+	if envAPIKey := os.Getenv("UNIFI_API_KEY"); envAPIKey != "" {
+		cfg.APIKey = envAPIKey
 	}
 	if !cfg.Debug {
 		cfg.Debug = os.Getenv("DEBUG") != ""
 	}
-	if cfg.LogLevel == "" {
-		if level := os.Getenv("LOG_LEVEL"); level != "" {
-			cfg.LogLevel = level
-		}
+	if envLogLevel := os.Getenv("LOG_LEVEL"); envLogLevel != "" {
+		cfg.LogLevel = envLogLevel
 	}
 }
 

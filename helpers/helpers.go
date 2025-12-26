@@ -42,33 +42,38 @@ func markPortUsed(externalPort int, serviceKey string) {
 	usedExternalPorts[externalPort] = serviceKey
 }
 
-// unmarkPortUsed removes external port from tracking
-func unmarkPortUsed(externalPort int) {
+// UnmarkPortUsed removes external port from tracking (exported for use by controller)
+// This function is called during service deletion to free up external ports for reuse
+func UnmarkPortUsed(externalPort int) {
 	portMutex.Lock()
 	defer portMutex.Unlock()
 	delete(usedExternalPorts, externalPort)
 }
 
-// ClearPortConflictTracking clears all port tracking (for testing)
+// ClearPortConflictTracking clears all port tracking (for testing only)
+// This function should NOT be used in production code
 func ClearPortConflictTracking() {
 	portMutex.Lock()
 	defer portMutex.Unlock()
 	usedExternalPorts = make(map[int]string)
 }
 
+// UnmarkPortsForService removes all external ports used by a specific service
+// This is useful for bulk cleanup during service deletion
+func UnmarkPortsForService(serviceKey string) {
+	portMutex.Lock()
+	defer portMutex.Unlock()
+
+	for port, svc := range usedExternalPorts {
+		if svc == serviceKey {
+			delete(usedExternalPorts, port)
+		}
+	}
+}
+
 // GetLBIP extracts the LoadBalancer IP from a service
 func GetLBIP(service *v1.Service) string {
-	// Only use status.loadBalancer.ingress for LoadBalancer services
-	// Filter out node IPs and only use VIPs
 	if len(service.Status.LoadBalancer.Ingress) > 0 {
-		// Prefer VIP mode IPs (most stable for LoadBalancer)
-		for _, ingress := range service.Status.LoadBalancer.Ingress {
-			if ingress.IP != "" && isVIPIngress(ingress) {
-				return ingress.IP
-			}
-		}
-
-		// Fallback to any IP if no VIP found
 		for _, ingress := range service.Status.LoadBalancer.Ingress {
 			if ingress.IP != "" {
 				return ingress.IP
@@ -77,43 +82,6 @@ func GetLBIP(service *v1.Service) string {
 	}
 
 	return ""
-}
-
-// isVIPIngress checks if ingress is VIP mode (stable LoadBalancer IP)
-func isVIPIngress(ingress v1.LoadBalancerIngress) bool {
-	// Check if it's likely a VIP by IP range or mode
-	if ingress.IP != "" {
-		// MetalLB VIPs are typically in specific ranges
-		// For your case, 192.168.72.1 is VIP, 192.168.27.130 is a node IP
-		// This is a heuristic - adjust based on your network
-		return !isNodeIP(ingress.IP)
-	}
-	return false
-}
-
-// isNodeIP detects node IPs vs VIP IPs
-func isNodeIP(ip string) bool {
-	// Add logic to identify node IPs vs LoadBalancer VIPs
-	// This is network-specific - adjust for your environment
-	nodeIPRanges := []string{
-		"192.168.27.", // Your node IP range
-		// Add other node IP ranges as needed
-	}
-
-	for _, rangePrefix := range nodeIPRanges {
-		if len(ip) >= len(rangePrefix) && ip[:len(rangePrefix)] == rangePrefix {
-			return true
-		}
-	}
-	return false
-}
-
-// getIPMode gets IP mode from ingress
-func getIPMode(ingress v1.LoadBalancerIngress) string {
-	if ingress.IPMode != nil {
-		return string(*ingress.IPMode)
-	}
-	return "unknown"
 }
 
 // parsePortMappingAnnotation parses port mapping annotation like "http:1234,https:8443"
@@ -300,7 +268,7 @@ func GetPortConfigs(service *v1.Service, lbIP string, annotationKey string) ([]r
 	return configs, nil
 }
 
-// GetServicePortByName finds a service port by name
+// GetServicePortByName finds a service port by name (used in tests)
 func GetServicePortByName(service *v1.Service, name string) v1.ServicePort {
 	for _, port := range service.Spec.Ports {
 		if port.Name == name {

@@ -14,10 +14,10 @@ import (
 
 	"github.com/go-logr/logr"
 	"github.com/spf13/cobra"
+	"kube-router-port-forward/cmd/cleaner"
+	"kube-router-port-forward/cmd/service-debugger"
 	"kube-router-port-forward/config"
 	"kube-router-port-forward/controller"
-	"kube-router-port-forward/pkg/cleaner"
-	"kube-router-port-forward/pkg/debugger"
 	"kube-router-port-forward/routers"
 	"sigs.k8s.io/yaml"
 
@@ -86,7 +86,7 @@ func init() {
 
 	// Add subcommands
 	rootCmd.AddCommand(controllerCmd)
-	rootCmd.AddCommand(debugCmd)
+	rootCmd.AddCommand(serviceDebuggerCmd)
 	rootCmd.AddCommand(cleanCmd)
 
 	// Set default command to controller when no command is specified
@@ -108,25 +108,26 @@ var controllerCmd = &cobra.Command{
 	RunE:  runController,
 }
 
-// debugCmd runs the service debugger
-var debugCmd = &cobra.Command{
-	Use:   "debug",
-	Short: "Run the service debugger",
-	Long:  `Monitor Kubernetes services for debugging purposes`,
-	RunE:  runDebug,
-}
-
 func init() {
-	// Add debug-specific flags
-	debugCmd.Flags().StringP("namespace", "n", "", "Filter by namespace (empty = all)")
-	debugCmd.Flags().StringP("labels", "l", "", "Filter by labels (e.g., app=web)")
-	debugCmd.Flags().StringP("output", "o", "text", "Output format: text, json")
-	debugCmd.Flags().IntP("history", "H", 10, "Number of changes to track per service")
-	debugCmd.Flags().DurationP("interval", "i", 5*time.Second, "Polling interval for status checks")
+	// Add service-debugger specific flags
+	serviceDebuggerCmd.Flags().StringP("namespace", "n", "", "Filter by namespace (empty = all)")
+	serviceDebuggerCmd.Flags().StringP("labels", "l", "", "Filter by labels (e.g., app=web)")
+	serviceDebuggerCmd.Flags().StringP("log-level", "", "info", "Log level: debug, info, warn, error")
+	serviceDebuggerCmd.Flags().StringP("output", "o", "text", "Output format: text, json")
+	serviceDebuggerCmd.Flags().IntP("history", "H", 10, "Number of changes to track per service")
+	serviceDebuggerCmd.Flags().DurationP("interval", "i", 5*time.Second, "Polling interval for status checks")
 
 	// Add clean-specific flags
 	cleanCmd.Flags().StringP("port-mappings", "m", "", "Port mappings to clean (format: 'external-port:dest-ip', comma-separated) [REQUIRED]")
 	cleanCmd.Flags().StringP("port-mappings-file", "f", "", "Path to port mappings configuration file (YAML/JSON)")
+}
+
+// serviceDebuggerCmd runs the service IP debugger
+var serviceDebuggerCmd = &cobra.Command{
+	Use:   "service-debugger",
+	Short: "Run the service IP debugger",
+	Long:  `Monitor Kubernetes services for IP changes and debug LoadBalancer IP issues in LoadBalancer services`,
+	RunE:  runServiceDebugger,
 }
 
 // cleanCmd runs the port forwarding rule cleaner
@@ -169,12 +170,11 @@ func runController(cmd *cobra.Command, args []string) error {
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
 		Router: router,
+		Config: &cfg,
 	}
 
 	// Setup controller
-	if err := ctrl.NewControllerManagedBy(mgr).
-		For(&corev1.Service{}).
-		Complete(reconciler); err != nil {
+	if err := reconciler.SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("failed to setup controller: %w", err)
 	}
 
@@ -183,36 +183,6 @@ func runController(cmd *cobra.Command, args []string) error {
 
 	fmt.Println("Starting port forwarding controller")
 	return mgr.Start(ctrl.SetupSignalHandler())
-}
-
-func runDebug(cmd *cobra.Command, args []string) error {
-	// Get debug-specific flags
-	namespace, _ := cmd.Flags().GetString("namespace")
-	labels, _ := cmd.Flags().GetString("labels")
-	output, _ := cmd.Flags().GetString("output")
-	history, _ := cmd.Flags().GetInt("history")
-	interval, _ := cmd.Flags().GetDuration("interval")
-
-	// Set defaults
-	if output == "" {
-		output = "text"
-	}
-	if history == 0 {
-		history = 10
-	}
-	if interval == 0 {
-		interval = 5 * time.Second
-	}
-
-	config := debugger.DebugConfig{
-		Namespace:     namespace,
-		LabelSelector: labels,
-		OutputFormat:  output,
-		HistorySize:   history,
-		PollInterval:  interval,
-	}
-
-	return debugger.Run(config)
 }
 
 func runClean(cmd *cobra.Command, args []string) error {
@@ -247,6 +217,38 @@ func runClean(cmd *cobra.Command, args []string) error {
 	}
 
 	return cleaner.Run(cleanConfig, portMaps)
+}
+
+func runServiceDebugger(cmd *cobra.Command, args []string) error {
+	// Get service-debugger specific flags
+	namespace, _ := cmd.Flags().GetString("namespace")
+	labels, _ := cmd.Flags().GetString("labels")
+	logLevel, _ := cmd.Flags().GetString("log-level")
+	output, _ := cmd.Flags().GetString("output")
+	history, _ := cmd.Flags().GetInt("history")
+	interval, _ := cmd.Flags().GetDuration("interval")
+
+	// Set defaults
+	if output == "" {
+		output = "text"
+	}
+	if history == 0 {
+		history = 10
+	}
+	if interval == 0 {
+		interval = 5 * time.Second
+	}
+
+	config := servicedebugger.ServiceDebuggerConfig{
+		Namespace:     namespace,
+		LabelSelector: labels,
+		LogLevel:      logLevel,
+		OutputFormat:  output,
+		HistorySize:   history,
+		PollInterval:  interval,
+	}
+
+	return servicedebugger.Run(config)
 }
 
 // parsePortMappingsString parses CLI string format: "83:192.168.27.130,8080:192.168.27.131"

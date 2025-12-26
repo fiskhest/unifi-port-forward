@@ -10,7 +10,7 @@ import (
 	"kube-router-port-forward/routers"
 )
 
-// MockRouter implements the routers.Router interface for testing
+// MockRouter implements routers.Router interface for testing
 type MockRouter struct {
 	mu           sync.RWMutex
 	PortForwards []unifi.PortForward
@@ -29,11 +29,39 @@ func NewMockRouter() *MockRouter {
 	}
 }
 
+// SetFailure controls whether the mock should fail
+func (r *MockRouter) SetFailure(shouldFail bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.shouldFail = shouldFail
+}
+
+// GetCallCount returns how many times a method was called
+func (r *MockRouter) GetCallCount(method string) int {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.callCount[method]
+}
+
+// GetFailCount returns how many failures occurred
+func (r *MockRouter) GetFailCount() int {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.failCount
+}
+
+// ResetCallCounts resets all call counters
+func (r *MockRouter) ResetCallCounts() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.callCount = make(map[string]int)
+	r.failCount = 0
+}
+
 // AddPort implements routers.Router.AddPort
 func (r *MockRouter) AddPort(ctx context.Context, config routers.PortConfig) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-
 	r.callCount["AddPort"]++
 
 	if r.shouldFail {
@@ -41,14 +69,7 @@ func (r *MockRouter) AddPort(ctx context.Context, config routers.PortConfig) err
 		return fmt.Errorf("simulated AddPort failure")
 	}
 
-	// Check if port already exists
-	for _, existing := range r.PortForwards {
-		if existing.DstPort == strconv.Itoa(config.DstPort) && existing.DestinationIP == config.DstIP {
-			return fmt.Errorf("port %d to %s already exists", config.DstPort, config.DstIP)
-		}
-	}
-
-	// Create new rule
+	// Convert to unifi.PortForward format for internal storage
 	pf := unifi.PortForward{
 		ID:            fmt.Sprintf("mock-id-%d", len(r.PortForwards)+1),
 		Name:          config.Name,
@@ -61,15 +82,22 @@ func (r *MockRouter) AddPort(ctx context.Context, config routers.PortConfig) err
 		Src:           config.SrcIP,
 	}
 
+	// Check if port already exists
+	for _, existing := range r.PortForwards {
+		if existing.DstPort == strconv.Itoa(config.DstPort) && existing.DestinationIP == config.DstIP {
+			return fmt.Errorf("port %d to %s already exists", config.DstPort, config.DstIP)
+		}
+	}
+
+	// Add new rule
 	r.PortForwards = append(r.PortForwards, pf)
 	return nil
 }
 
 // CheckPort implements routers.Router.CheckPort
 func (r *MockRouter) CheckPort(ctx context.Context, port int) (*unifi.PortForward, bool, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	r.callCount["CheckPort"]++
 
 	if r.shouldFail {
@@ -78,6 +106,7 @@ func (r *MockRouter) CheckPort(ctx context.Context, port int) (*unifi.PortForwar
 	}
 
 	portStr := strconv.Itoa(port)
+
 	for _, pf := range r.PortForwards {
 		if pf.DstPort == portStr {
 			return &pf, true, nil
@@ -91,7 +120,6 @@ func (r *MockRouter) CheckPort(ctx context.Context, port int) (*unifi.PortForwar
 func (r *MockRouter) RemovePort(ctx context.Context, config routers.PortConfig) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-
 	r.callCount["RemovePort"]++
 
 	if r.shouldFail {
@@ -99,23 +127,22 @@ func (r *MockRouter) RemovePort(ctx context.Context, config routers.PortConfig) 
 		return fmt.Errorf("simulated RemovePort failure")
 	}
 
+	portStr := strconv.Itoa(config.DstPort)
 	for i, pf := range r.PortForwards {
-		if pf.DstPort == strconv.Itoa(config.DstPort) &&
-			pf.DestinationIP == config.DstIP &&
-			pf.Name == config.Name {
+		if pf.DstPort == portStr && pf.DestinationIP == config.DstIP {
+			// Remove the matching rule
 			r.PortForwards = append(r.PortForwards[:i], r.PortForwards[i+1:]...)
 			return nil
 		}
 	}
 
-	return fmt.Errorf("port forward rule not found")
+	return fmt.Errorf("port %d to %s not found", config.DstPort, config.DstIP)
 }
 
 // UpdatePort implements routers.Router.UpdatePort
 func (r *MockRouter) UpdatePort(ctx context.Context, port int, config routers.PortConfig) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-
 	r.callCount["UpdatePort"]++
 
 	if r.shouldFail {
@@ -125,24 +152,24 @@ func (r *MockRouter) UpdatePort(ctx context.Context, port int, config routers.Po
 
 	portStr := strconv.Itoa(port)
 	for i, pf := range r.PortForwards {
-		if pf.DstPort == portStr {
-			// Update the existing rule
-			updatedPf := pf
-			updatedPf.Name = config.Name
-			updatedPf.DestinationIP = config.DstIP
-			updatedPf.DstPort = strconv.Itoa(config.DstPort)
-			updatedPf.FwdPort = strconv.Itoa(config.FwdPort)
-			updatedPf.Proto = config.Protocol
-			updatedPf.Enabled = config.Enabled
-			updatedPf.PfwdInterface = config.Interface
-			updatedPf.Src = config.SrcIP
-
-			r.PortForwards[i] = updatedPf
+		if pf.DstPort == portStr && pf.DestinationIP == config.DstIP {
+			// Update existing rule
+			r.PortForwards[i] = unifi.PortForward{
+				ID:            pf.ID,
+				Name:          config.Name,
+				DestinationIP: config.DstIP,
+				DstPort:       strconv.Itoa(config.DstPort),
+				FwdPort:       strconv.Itoa(config.FwdPort),
+				Proto:         config.Protocol,
+				Enabled:       config.Enabled,
+				PfwdInterface: config.Interface,
+				Src:           config.SrcIP,
+			}
 			return nil
 		}
 	}
 
-	return fmt.Errorf("port forward rule with port %d not found", port)
+	return fmt.Errorf("port %d to %s not found", port, config.DstIP)
 }
 
 // ListAllPortForwards implements routers.Router.ListAllPortForwards
@@ -162,27 +189,6 @@ func (r *MockRouter) ListAllPortForwards(ctx context.Context) ([]*unifi.PortForw
 		result[i] = &r.PortForwards[i]
 	}
 	return result, nil
-}
-
-// SetFailure enables/disables failure simulation
-func (r *MockRouter) SetFailure(shouldFail bool) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.shouldFail = shouldFail
-}
-
-// GetCallCount returns the number of calls to a specific method
-func (r *MockRouter) GetCallCount(method string) int {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return r.callCount[method]
-}
-
-// GetFailCount returns the number of simulated failures
-func (r *MockRouter) GetFailCount() int {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return r.failCount
 }
 
 // ResetCounters resets call and failure counters
@@ -211,6 +217,7 @@ func (r *MockRouter) GetPortForwardCount() int {
 func (r *MockRouter) HasPortForward(port, dstIP string) bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
+	r.callCount["HasPortForward"]++
 
 	for _, pf := range r.PortForwards {
 		if pf.DstPort == port && pf.DestinationIP == dstIP {

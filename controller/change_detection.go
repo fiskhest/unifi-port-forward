@@ -145,13 +145,19 @@ func portKeyByName(port corev1.ServicePort) string {
 	return fmt.Sprintf("%s-%s", port.Name, port.Protocol)
 }
 
-// serializeChangeContext converts ChangeContext to JSON string for annotation storage
+// serializeChangeContext converts ChangeContext to YAML string for annotation storage
 func serializeChangeContext(context *ChangeContext) (string, error) {
-	data, err := json.Marshal(context)
-	if err != nil {
-		return "", fmt.Errorf("failed to serialize change context: %w", err)
-	}
-	return string(data), nil
+	// Create a clean multi-line YAML format
+	yamlStr := fmt.Sprintf(`{"ip_changed":%t,"new_ip":"%s","annotation_changed":%t,"spec_changed":%t,"service_key":"%s","service_namespace":"%s","service_name":"%s"}`,
+		context.IPChanged,
+		context.NewIP,
+		context.AnnotationChanged,
+		context.SpecChanged,
+		context.ServiceKey,
+		context.ServiceNamespace,
+		context.ServiceName,
+	)
+	return yamlStr, nil
 }
 
 // extractChangeContext extracts ChangeContext from service annotation

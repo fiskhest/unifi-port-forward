@@ -1,27 +1,27 @@
 # Service IP Debugger
 
-A utility to monitor Kubernetes service IP changes and debug transient IP issues in the kube-port-forward-controller.
+A utility to monitor Kubernetes service IP changes and debug LoadBalancer IP issues in the kube-port-forward-controller.
 
 ## Usage
 
 ```bash
 # Monitor all services
-./service-debugger
+./kube-port-forward-controller service-debugger
 
 # Monitor specific namespace
-./service-debugger -namespace=default
+./kube-port-forward-controller service-debugger -namespace=default
 
 # Monitor services with specific labels
-./service-debugger -labels=app=web
+./kube-port-forward-controller service-debugger -labels=app=web
 
 # JSON output for parsing
-./service-debugger -output=json
+./kube-port-forward-controller service-debugger -output=json
 
 # Debug mode with verbose logging
-./service-debugger -log-level=debug
+./kube-port-forward-controller service-debugger -log-level=debug
 
 # Custom polling interval
-./service-debugger -interval=10s
+./kube-port-forward-controller service-debugger -interval=10s
 ```
 
 ## Command Line Options
@@ -38,14 +38,13 @@ A utility to monitor Kubernetes service IP changes and debug transient IP issues
 ### Text Format
 ```
 🟢 [2025-01-15T10:30:15Z] CREATED default/web-service
-   IPs: ["192.168.27.130"] (type: node)
+   IPs: ["192.168.27.130"] (type: loadbalancer)
    LB_STATUS: 1 ingress entries
    ANNOTATIONS: kube-port-forward-controller/ports=true
-   ℹ️  INFO: Node IP detected - may be transient, expecting VIP assignment
 
 🔄 [2025-01-15T10:32:45Z] IP_CHANGED default/web-service
    IP_CHANGE: ["192.168.27.130"] -> ["192.168.72.1"]
-   IP_TYPE: node -> vip
+   IP_TYPE: loadbalancer -> loadbalancer
    LB_STATUS: 1 ingress entries
    ANNOTATIONS: kube-port-forward-controller/ports=true
 ```
@@ -59,7 +58,7 @@ A utility to monitor Kubernetes service IP changes and debug transient IP issues
   "old_ips": ["192.168.27.130"],
   "new_ips": ["192.168.72.1"],
   "change_type": "ip_changed",
-  "ip_type": "vip",
+  "ip_type": "loadbalancer",
   "num_ingress": 1,
   "has_annotation": true
 }
@@ -67,17 +66,16 @@ A utility to monitor Kubernetes service IP changes and debug transient IP issues
 
 ## IP Classification
 
-The debugger classifies IPs to help identify transient vs stable assignments:
+The debugger classifies IPs to help identify LoadBalancer IP states:
 
-- **VIP**: Stable LoadBalancer IP (preferred for port forwarding)
-- **Node**: Node IP (typically transient, may change)
-- **Mixed**: Multiple IPs (may cause port forwarding issues)
+- **LoadBalancer**: LoadBalancer IP (used for port forwarding)
+- **Multiple**: Multiple IPs (may cause port forwarding issues)
 - **Unknown**: No IP or unrecognized format
 
 ## Debugging Scenarios
 
-### 1. Transient IP Detection
-Monitor services that start with node IPs and get VIPs:
+### 1. LoadBalancer IP Monitoring
+Monitor services and their LoadBalancer IP assignments:
 ```bash
 ./service-debugger -namespace=default -log-level=debug
 ```
