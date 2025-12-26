@@ -26,10 +26,7 @@ spec:
             - name: UNIFI_ROUTER_IP
               value: 192.168.27.1
             - name: UNIFI_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: unifi-credentials
-                  key: pass
+              value: apa # TODO: DO NOT COMMIT
             - name: DEBUG
               value: "True"
 ---
@@ -46,7 +43,7 @@ metadata:
 rules:
   - apiGroups: [""]
     resources: ["services"]
-    verbs: ["get", "watch", "list"]
+    verbs: ["get", "watch", "list", "update"]
   - apiGroups: [""]
     resources: ["events"]
     verbs: ["create", "patch"]
