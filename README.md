@@ -2,7 +2,13 @@
 
 Kubernetes controller for automatically configuring router settings to port forward services. 
 
-This came out of desire to completely provision an external service in my kubernetes homelab, using other services DNS can be automatically configured, as Load Balancer created, but no method to automatically open a port on my router, something frequently done when hosting things like game servers. 
+A wise man once said that writing automation for managing ones router would be a fools errand. I wholeheartedly agree, but it does not change the fact that I also am a fool.
+
+It has always been a wish of mine to learn how to implement kubernetes controllers. Once I realised UCG Max supports BGP and could be used to roll out metallb to automate IP allocation on a different subnet in my cluster, I had the perfect reason to investigate.
+
+This controller will look for any `LoadBalancer` objects annotated with `kube-port-forward-controller/ports`. It will inspect the currently provisioned Port Forward rules on the Unifi router, either updating or ensuring that port forward rules match with the service object spec and annotation rule.
+
+The controller does not delete other rules (as long as they don't use conflicting names) and has a small footprint.
 
 ## Features
 
@@ -15,16 +21,10 @@ This came out of desire to completely provision an external service in my kubern
 
 ## Supported Routers
 
-- **Unifi Dream Machine Pro** (Primary supported router)
-- PfSense (Planned)
-- OPNSense (Planned)
-- VyOS (Planned)
+- Unifi Cloud Gateway Max
+- Probably other Unifi routers like UDM, but YMMV. I have neither tested nor plan to add support for other variants.
 
 ## Usage
-
-### Annotation Syntax
-
-The controller uses the `kube-port-forward-controller/ports` annotation to configure port forwarding.
 
 #### Single Port
 ```yaml
@@ -195,62 +195,17 @@ For detailed cleaner documentation, see [cmd/cleaner/README.md](cmd/cleaner/READ
 
 For detailed service-debugger documentation, see [cmd/service-debugger/README.md](cmd/service-debugger/README.md).
 
-## Building and Running
-
-### Building
-```bash
-go build -o kube-port-forward-controller
-```
-
-### Testing
-```bash
-go test -v
-```
-
-### Running
-```bash
-# Set environment variables
-export UNIFI_ROUTER_IP="192.168.1.1"
-export UNIFI_USERNAME="admin"
-export UNIFI_PASSWORD="password"
-export UNIFI_SITE="default"
-
-# Run the controller (default command)
-./kube-port-forward-controller
-```
-
-## Code Quality
-
-### Formatting
-```bash
-# Check formatting issues (non-vendor files only)
-find . -name "*.go" -not -path "./vendor/*" | xargs gofmt -l
-
-# Auto-fix formatting
-gofmt -w .
-```
-
-### Linting
-```bash
-# Quick lint check
-golangci-lint run ./...
-
-# Run all linters with maximum issue detection
-golangci-lint run --max-issues-per-linter=0 --max-same-issues=0 ./...
-
-# Security-focused linting
-golangci-lint run --enable-only=gosec,errcheck,staticcheck ./...
-
-# Auto-fix available issues
-golangci-lint run --fix ./...
-```
-
 ### Pre-commit Check
 ```bash
-# Complete code quality check before committing
-gofmt -l .
-golangci-lint run ./...
-go test -v ./...
+just check
+```
+
+or individually
+
+```bash
+just fmt
+just lint
+just test
 ```
 
 ## Configuration
@@ -261,31 +216,26 @@ go test -v ./...
 - `UNIFI_PASSWORD`: Router password
 - `UNIFI_SITE`: UniFi site name (default: default)
 
-### Kubernetes RBAC
-The controller needs permission to watch and list services:
+### Kubernetes Installation
 
-```yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: kube-port-forward-controller
-rules:
-- apiGroups: [""]
-  resources: ["services"]
-  verbs: ["get", "watch", "list"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: kube-port-forward-controller
-subjects:
-- kind: ServiceAccount
-  name: kube-port-forward-controller
-  namespace: your-namespace
-roleRef:
-  kind: ClusterRole
-  name: kube-port-forward-controller
+**Prerequisites**
+- Create the namespace: `kubectl create namespace kube-port-forward-controller`
+
+**Customize Environment Variables**
+Edit `manifests/deployment.yaml` and update the environment variables in the container spec:
+- `UNIFI_ROUTER_IP`: IP address of your UniFi router
+- `UNIFI_USERNAME`: Username for router access
+- `UNIFI_PASSWORD`: Password for router access
+
+**Deploy the Controller**
+```bash
+kubectl apply -f manifests/
 ```
+
+This will deploy:
+- The controller deployment
+- Service account with necessary permissions
+- RBAC rules for service monitoring and updates
 
 ## Troubleshooting
 
