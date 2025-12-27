@@ -7,7 +7,7 @@ import (
 	"sync"
 
 	v1 "k8s.io/api/core/v1"
-	"kube-router-port-forward/routers"
+	"kube-router-port-forward/pkg/routers"
 )
 
 // Port conflict detection and tracking

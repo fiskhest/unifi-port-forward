@@ -7,9 +7,9 @@ import (
 
 	"github.com/filipowm/go-unifi/unifi"
 	corev1 "k8s.io/api/core/v1"
-	"kube-router-port-forward/config"
-	"kube-router-port-forward/helpers"
-	"kube-router-port-forward/routers"
+	"kube-router-port-forward/pkg/config"
+	"kube-router-port-forward/pkg/helpers"
+	"kube-router-port-forward/pkg/routers"
 	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
 )
 
@@ -176,8 +176,6 @@ func (r *PortForwardReconciler) executeOperations(ctx context.Context, operation
 			err = r.Router.RemovePort(ctx, op.Config)
 			if err == nil {
 				result.Deleted = append(result.Deleted, op.Config)
-				// Add port conflict tracking cleanup
-				helpers.UnmarkPortUsed(op.Config.DstPort)
 			}
 		}
 

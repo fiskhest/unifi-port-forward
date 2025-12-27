@@ -6,9 +6,9 @@ import (
 	"strconv"
 	"strings"
 
-	"kube-router-port-forward/config"
-	"kube-router-port-forward/helpers"
-	"kube-router-port-forward/routers"
+	"kube-router-port-forward/pkg/config"
+	"kube-router-port-forward/pkg/helpers"
+	"kube-router-port-forward/pkg/routers"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -138,6 +138,7 @@ func (r *PortForwardReconciler) handleServiceDeletion(ctx context.Context, names
 	// Remove all rules that belong to this service
 	servicePrefix := fmt.Sprintf("%s/%s:", namespacedName.Namespace, namespacedName.Name)
 	removedCount := 0
+	var cleanupErr error
 
 	for _, rule := range currentRules {
 		if strings.HasPrefix(rule.Name, servicePrefix) {
@@ -155,6 +156,7 @@ func (r *PortForwardReconciler) handleServiceDeletion(ctx context.Context, names
 			if err := r.Router.RemovePort(ctx, config); err != nil {
 				logger.Error(err, "Failed to remove port forward rule during service deletion",
 					"port", config.DstPort)
+				cleanupErr = fmt.Errorf("failed to remove port forward rule during service deletion: %w", err)
 			} else {
 				removedCount++
 				logger.Info("Removed port forward rule during service deletion",
@@ -168,6 +170,9 @@ func (r *PortForwardReconciler) handleServiceDeletion(ctx context.Context, names
 	logger.Info("Service deletion cleanup completed",
 		"removed_count", removedCount)
 
+	if cleanupErr != nil {
+		return ctrl.Result{}, cleanupErr
+	}
 	return ctrl.Result{}, nil
 }
 

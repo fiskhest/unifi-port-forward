@@ -17,9 +17,9 @@ import (
 	"github.com/spf13/cobra"
 	"kube-router-port-forward/cmd/cleaner"
 	"kube-router-port-forward/cmd/service-debugger"
-	"kube-router-port-forward/config"
-	"kube-router-port-forward/controller"
-	"kube-router-port-forward/routers"
+	"kube-router-port-forward/pkg/config"
+	"kube-router-port-forward/pkg/controller"
+	"kube-router-port-forward/pkg/routers"
 	"sigs.k8s.io/yaml"
 
 	corev1 "k8s.io/api/core/v1"

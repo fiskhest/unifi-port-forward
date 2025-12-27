@@ -6,7 +6,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"kube-router-port-forward/config"
+	"kube-router-port-forward/pkg/config"
 	ctrl "sigs.k8s.io/controller-runtime"
 )
 

@@ -8,7 +8,7 @@ import (
 	"sync"
 
 	"github.com/filipowm/go-unifi/unifi"
-	"kube-router-port-forward/routers"
+	"kube-router-port-forward/pkg/routers"
 )
 
 // MockRouter implements routers.Router interface for testing
@@ -67,7 +67,7 @@ func (r *MockRouter) AddPort(ctx context.Context, config routers.PortConfig) err
 	defer r.mu.Unlock()
 	r.callCount["AddPort"]++
 
-	if r.shouldFail { // Temporarily disable simulated failure logic
+	if r.shouldFail || r.ShouldOperationFail("AddPort") {
 		r.failCount++
 		return fmt.Errorf("simulated AddPort failure")
 	}
@@ -149,7 +149,7 @@ func (r *MockRouter) UpdatePort(ctx context.Context, port int, config routers.Po
 	defer r.mu.Unlock()
 	r.callCount["UpdatePort"]++
 
-	if r.shouldFail {
+	if r.shouldFail || r.ShouldOperationFail("UpdatePort") {
 		r.failCount++
 		return fmt.Errorf("simulated UpdatePort failure")
 	}
@@ -184,7 +184,7 @@ func (r *MockRouter) ListAllPortForwards(ctx context.Context) ([]*unifi.PortForw
 
 	r.callCount["ListAllPortForwards"]++
 
-	if r.shouldFail {
+	if r.shouldFail || r.ShouldOperationFail("ListAllPortForwards") {
 		r.failCount++
 		return nil, fmt.Errorf("simulated ListAllPortForwards failure")
 	}
@@ -316,8 +316,6 @@ func (r *MockRouter) SetSimulatedFailure(operation string, shouldFail bool) {
 
 // ShouldOperationFail checks if an operation should fail
 func (r *MockRouter) ShouldOperationFail(operation string) bool {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
 	r.callCount["ShouldOperationFail"]++
 
 	if r.simulatedFailures == nil {

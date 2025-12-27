@@ -3,7 +3,7 @@ package controller
 import (
 	"testing"
 
-	"kube-router-port-forward/routers"
+	"kube-router-port-forward/pkg/routers"
 
 	"github.com/filipowm/go-unifi/unifi"
 	corev1 "k8s.io/api/core/v1"

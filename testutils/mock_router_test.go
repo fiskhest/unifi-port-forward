@@ -1,16 +1,15 @@
-package controller
+package testutils
 
 import (
 	"context"
 	"testing"
 
-	"kube-router-port-forward/routers"
-	"kube-router-port-forward/testutils"
+	"kube-router-port-forward/pkg/routers"
 )
 
 // TestMockRouter_SimulatedFailure tests basic mock router failure logic
 func TestMockRouter_SimulatedFailure(t *testing.T) {
-	mockRouter := testutils.NewMockRouter()
+	mockRouter := NewMockRouter()
 
 	// Test 1: Verify initial state
 	if mockRouter.ShouldOperationFail("AddPort") {

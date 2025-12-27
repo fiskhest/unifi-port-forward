@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"kube-router-port-forward/pkg/helpers"
 	"kube-router-port-forward/testutils"
 
 	corev1 "k8s.io/api/core/v1"
@@ -27,8 +28,15 @@ type ControllerTestEnv struct {
 
 // NewControllerTestEnv creates a new test environment
 func NewControllerTestEnv(t *testing.T) *ControllerTestEnv {
+	// Clear port conflict tracking to ensure test isolation
+	helpers.ClearPortConflictTracking()
+
 	// Create mock router
 	mockRouter := testutils.NewMockRouter()
+
+	// Clear any existing state to ensure test isolation
+	mockRouter.ClearAllPortForwards()
+	mockRouter.ResetOperationCounts()
 
 	// Create mock clock starting at a fixed time
 	startTime := time.Date(2023, 1, 1, 12, 0, 0, 0, time.UTC)

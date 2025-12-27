@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
-	"kube-router-port-forward/config"
+	"kube-router-port-forward/pkg/config"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 )
 

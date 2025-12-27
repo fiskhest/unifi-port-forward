@@ -14,7 +14,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
-	"kube-router-port-forward/config"
+	"kube-router-port-forward/pkg/config"
 	client "sigs.k8s.io/controller-runtime/pkg/client"
 )
 

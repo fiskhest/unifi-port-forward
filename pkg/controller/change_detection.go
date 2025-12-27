@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"reflect"
 
+	"kube-router-port-forward/pkg/config"
+	"kube-router-port-forward/pkg/helpers"
+
 	corev1 "k8s.io/api/core/v1"
-	"kube-router-port-forward/helpers"
 )
 
 // ChangeContext captures what changed and how
@@ -64,8 +66,8 @@ func analyzeChanges(oldSvc, newSvc *corev1.Service) *ChangeContext {
 	oldAnn := oldSvc.GetAnnotations()
 	newAnn := newSvc.GetAnnotations()
 	if oldAnn != nil && newAnn != nil {
-		oldPortAnn := oldAnn["kube-port-forward-controller/ports"]
-		newPortAnn := newAnn["kube-port-forward-controller/ports"]
+		oldPortAnn := oldAnn[config.FilterAnnotation]
+		newPortAnn := newAnn[config.FilterAnnotation]
 		if oldPortAnn != newPortAnn {
 			context.AnnotationChanged = true
 			context.OldAnnotation = oldPortAnn
