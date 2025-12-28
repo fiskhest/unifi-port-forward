@@ -1,15 +1,19 @@
 package controller
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"reflect"
 	"strings"
+	"time"
 
 	"kube-router-port-forward/pkg/config"
 	"kube-router-port-forward/pkg/helpers"
+	"kube-router-port-forward/pkg/routers"
 
 	corev1 "k8s.io/api/core/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // ChangeContext captures what changed and how
@@ -25,9 +29,10 @@ type ChangeContext struct {
 	SpecChanged bool               `json:"spec_changed"`
 	PortChanges []PortChangeDetail `json:"port_changes,omitempty"`
 
-	ServiceKey       string `json:"service_key"`
-	ServiceNamespace string `json:"-"` // Not serialized, derived from ServiceKey
-	ServiceName      string `json:"-"` // Not serialized, derived from ServiceKey
+	ServiceKey       string   `json:"service_key"`
+	ServiceNamespace string   `json:"-"`                            // Not serialized, derived from ServiceKey
+	ServiceName      string   `json:"-"`                            // Not serialized, derived from ServiceKey
+	PortForwardRules []string `json:"port_forward_rules,omitempty"` // Final rules created for this service
 }
 
 // ChangeContextSerializable is what gets stored in annotations (without redundant fields)
@@ -41,6 +46,7 @@ type ChangeContextSerializable struct {
 	SpecChanged       bool               `json:"spec_changed"`
 	PortChanges       []PortChangeDetail `json:"port_changes,omitempty"`
 	ServiceKey        string             `json:"service_key"`
+	PortForwardRules  []string           `json:"port_forward_rules,omitempty"` // Final rules created for this service
 }
 
 // PortChangeDetail describes specific port changes
@@ -58,6 +64,30 @@ func (c *ChangeContext) HasRelevantChanges() bool {
 
 // ChangeContextAnnotationKey is the key used to store change context in service annotations
 const ChangeContextAnnotationKey = "kube-port-forward-controller/change-context"
+
+// ErrorContextAnnotationKey is key used to store error context in service annotations
+const ErrorContextAnnotationKey = "kube-port-forward-controller/error-context"
+
+// ErrorContext stores persistent error information for service
+type ErrorContext struct {
+	Timestamp            string                `json:"timestamp"`
+	LastFailureTime      string                `json:"last_failure_time"`
+	FailedPortOperations []FailedPortOperation `json:"failed_port_operations,omitempty"`
+	OverallStatus        string                `json:"overall_status"` // "success", "partial_failure", "complete_failure"
+	RetryCount           int                   `json:"retry_count"`
+	LastErrorCode        string                `json:"last_error_code,omitempty"`
+	LastErrorMessage     string                `json:"last_error_message,omitempty"`
+}
+
+// FailedPortOperation details a specific failed port operation
+type FailedPortOperation struct {
+	PortMapping  string `json:"port_mapping"`
+	ExternalPort int    `json:"external_port"`
+	Protocol     string `json:"protocol"`
+	ErrorType    string `json:"error_type"` // "conflict", "router_error", "validation_error"
+	ErrorMessage string `json:"error_message"`
+	Timestamp    string `json:"timestamp"`
+}
 
 // analyzeChanges performs granular analysis of what changed between old and new service
 func analyzeChanges(oldSvc, newSvc *corev1.Service) *ChangeContext {
@@ -174,6 +204,7 @@ func serializeChangeContext(context *ChangeContext) (string, error) {
 		SpecChanged:       context.SpecChanged,
 		PortChanges:       context.PortChanges,
 		ServiceKey:        context.ServiceKey,
+		PortForwardRules:  context.PortForwardRules,
 	}
 
 	// Marshal to JSON with proper formatting for block scalar
@@ -239,6 +270,123 @@ func extractChangeContext(service *corev1.Service) (*ChangeContext, error) {
 	}
 
 	return &context, nil
+}
+
+// updateErrorContextAnnotation updates service with error context
+func updateErrorContextAnnotation(ctx context.Context, r client.Client, service *corev1.Service, errorContext *ErrorContext) error {
+	// Serialize error context
+	errorJSON, err := json.MarshalIndent(errorContext, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal error context: %w", err)
+	}
+
+	// Update service annotations
+	annotations := service.GetAnnotations()
+	if annotations == nil {
+		annotations = make(map[string]string)
+	}
+	annotations[ErrorContextAnnotationKey] = string(errorJSON)
+	service.SetAnnotations(annotations)
+
+	return r.Update(ctx, service)
+}
+
+// clearErrorContextAnnotation removes error context from service
+func clearErrorContextAnnotation(ctx context.Context, r client.Client, service *corev1.Service) error {
+	annotations := service.GetAnnotations()
+	if annotations == nil {
+		return nil
+	}
+
+	delete(annotations, ErrorContextAnnotationKey)
+	service.SetAnnotations(annotations)
+
+	return r.Update(ctx, service)
+}
+
+// extractErrorContext extracts error context from service annotation
+func extractErrorContext(service *corev1.Service) (*ErrorContext, error) {
+	ann := service.GetAnnotations()
+	if ann == nil {
+		return nil, nil
+	}
+
+	errorJSON := ann[ErrorContextAnnotationKey]
+	if errorJSON == "" {
+		return nil, nil
+	}
+
+	var errorContext ErrorContext
+	if err := json.Unmarshal([]byte(errorJSON), &errorContext); err != nil {
+		return nil, fmt.Errorf("failed to deserialize error context: %w", err)
+	}
+
+	return &errorContext, nil
+}
+
+// determineOverallStatus calculates overall operation status
+func determineOverallStatus(successCount, failedCount int) string {
+	if failedCount == 0 {
+		return "success"
+	}
+	if successCount == 0 {
+		return "complete_failure"
+	}
+	return "partial_failure"
+}
+
+// buildFailedOperations creates failed port operation details from errors
+func buildFailedOperations(errors []error, operations []PortOperation) []FailedPortOperation {
+	var failedOps []FailedPortOperation
+
+	for i, err := range errors {
+		if i < len(operations) {
+			op := operations[i]
+			failedOps = append(failedOps, FailedPortOperation{
+				PortMapping:  op.Config.Name,
+				ExternalPort: op.Config.DstPort,
+				Protocol:     op.Config.Protocol,
+				ErrorType:    "router_error",
+				ErrorMessage: err.Error(),
+				Timestamp:    getCurrentTime(),
+			})
+		}
+	}
+
+	return failedOps
+}
+
+// getCurrentTime returns current timestamp in RFC3339 format
+func getCurrentTime() string {
+	return time.Now().Format(time.RFC3339)
+}
+
+// collectRulesForService extracts rule names from port configurations
+func collectRulesForService(configs []routers.PortConfig) []string {
+	var rules []string
+	for _, config := range configs {
+		rules = append(rules, config.Name) // Already in "namespace/service:port" format
+	}
+	return rules
+}
+
+// updateChangeContextAnnotation updates service annotation with new change context
+func updateChangeContextAnnotation(ctx context.Context, r client.Client, service *corev1.Service, changeContext *ChangeContext) error {
+	// Serialize change context with port forward rules
+	contextJSON, err := serializeChangeContext(changeContext)
+	if err != nil {
+		return fmt.Errorf("failed to serialize change context: %w", err)
+	}
+
+	// Update service annotations
+	annotations := service.GetAnnotations()
+	if annotations == nil {
+		annotations = make(map[string]string)
+	}
+	annotations[ChangeContextAnnotationKey] = contextJSON
+	service.SetAnnotations(annotations)
+
+	return r.Update(ctx, service)
 }
 
 // parseServiceKey extracts namespace and name from a service key (format: "namespace/name")
