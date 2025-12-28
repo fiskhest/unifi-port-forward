@@ -1,9 +1,11 @@
 package controller
 
 import (
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func TestChangeDetection_IPChange(t *testing.T) {
@@ -110,4 +112,78 @@ func TestChangeAnalysis_PortChanges(t *testing.T) {
 		t.Errorf("Expected port change from 80 to 8080, got %d to %d",
 			change.OldPort.Port, change.NewPort.Port)
 	}
+}
+
+func TestChangeContextSerializationFormat(t *testing.T) {
+	// Test that new format excludes redundant fields and is properly formatted
+	context := &ChangeContext{
+		IPChanged:         true,
+		OldIP:             "192.168.1.100",
+		NewIP:             "192.168.1.101",
+		AnnotationChanged: false,
+		OldAnnotation:     "http:80",
+		NewAnnotation:     "http:81",
+		SpecChanged:       true,
+		ServiceKey:        "test-namespace/test-service",
+		ServiceNamespace:  "test-namespace",
+		ServiceName:       "test-service",
+	}
+
+	serialized, err := serializeChangeContext(context)
+	if err != nil {
+		t.Fatalf("Failed to serialize: %v", err)
+	}
+
+	// Verify it contains expected fields
+	if !strings.Contains(serialized, `"ip_changed": true`) {
+		t.Error("Missing ip_changed field")
+	}
+	if !strings.Contains(serialized, `"service_key": "test-namespace/test-service"`) {
+		t.Error("Missing service_key field")
+	}
+
+	// Verify it excludes redundant fields
+	if strings.Contains(serialized, "service_namespace") {
+		t.Error("Should not contain service_namespace field")
+	}
+	if strings.Contains(serialized, "service_name") {
+		t.Error("Should not contain service_name field")
+	}
+
+	// Verify it's properly formatted (contains newlines and indentation)
+	if !strings.Contains(serialized, "\n") {
+		t.Error("Should be multi-line formatted")
+	}
+	if !strings.Contains(serialized, "  ") {
+		t.Error("Should contain indentation")
+	}
+
+	// Simulate a service with the annotation
+	mockService := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-service",
+			Namespace: "test-namespace",
+			Annotations: map[string]string{
+				ChangeContextAnnotationKey: serialized,
+			},
+		},
+	}
+
+	extracted, err := extractChangeContext(mockService)
+	if err != nil {
+		t.Fatalf("Failed to extract from mock service: %v", err)
+	}
+
+	// Verify extracted context has all fields populated
+	if extracted.ServiceKey != "test-namespace/test-service" {
+		t.Errorf("Expected service_key 'test-namespace/test-service', got '%s'", extracted.ServiceKey)
+	}
+	if extracted.ServiceNamespace != "test-namespace" {
+		t.Errorf("Expected service_namespace 'test-namespace', got '%s'", extracted.ServiceNamespace)
+	}
+	if extracted.ServiceName != "test-service" {
+		t.Errorf("Expected service_name 'test-service', got '%s'", extracted.ServiceName)
+	}
+
+	t.Logf("New format output:\n%s", serialized)
 }

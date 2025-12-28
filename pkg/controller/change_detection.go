@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"strings"
 
 	"kube-router-port-forward/pkg/config"
 	"kube-router-port-forward/pkg/helpers"
@@ -25,8 +26,21 @@ type ChangeContext struct {
 	PortChanges []PortChangeDetail `json:"port_changes,omitempty"`
 
 	ServiceKey       string `json:"service_key"`
-	ServiceNamespace string `json:"service_namespace"`
-	ServiceName      string `json:"service_name"`
+	ServiceNamespace string `json:"-"` // Not serialized, derived from ServiceKey
+	ServiceName      string `json:"-"` // Not serialized, derived from ServiceKey
+}
+
+// ChangeContextSerializable is what gets stored in annotations (without redundant fields)
+type ChangeContextSerializable struct {
+	IPChanged         bool               `json:"ip_changed"`
+	OldIP             string             `json:"old_ip,omitempty"`
+	NewIP             string             `json:"new_ip,omitempty"`
+	AnnotationChanged bool               `json:"annotation_changed"`
+	OldAnnotation     string             `json:"old_annotation,omitempty"`
+	NewAnnotation     string             `json:"new_annotation,omitempty"`
+	SpecChanged       bool               `json:"spec_changed"`
+	PortChanges       []PortChangeDetail `json:"port_changes,omitempty"`
+	ServiceKey        string             `json:"service_key"`
 }
 
 // PortChangeDetail describes specific port changes
@@ -147,22 +161,31 @@ func portKeyByName(port corev1.ServicePort) string {
 	return fmt.Sprintf("%s-%s", port.Name, port.Protocol)
 }
 
-// serializeChangeContext converts ChangeContext to YAML string for annotation storage
+// serializeChangeContext converts ChangeContext to multi-line formatted JSON string for annotation storage
 func serializeChangeContext(context *ChangeContext) (string, error) {
-	// Create a clean multi-line YAML format
-	yamlStr := fmt.Sprintf(`{"ip_changed":%t,"new_ip":"%s","annotation_changed":%t,"spec_changed":%t,"service_key":"%s","service_namespace":"%s","service_name":"%s"}`,
-		context.IPChanged,
-		context.NewIP,
-		context.AnnotationChanged,
-		context.SpecChanged,
-		context.ServiceKey,
-		context.ServiceNamespace,
-		context.ServiceName,
-	)
-	return yamlStr, nil
+	// Create serializable version (without redundant fields)
+	serializable := &ChangeContextSerializable{
+		IPChanged:         context.IPChanged,
+		OldIP:             context.OldIP,
+		NewIP:             context.NewIP,
+		AnnotationChanged: context.AnnotationChanged,
+		OldAnnotation:     context.OldAnnotation,
+		NewAnnotation:     context.NewAnnotation,
+		SpecChanged:       context.SpecChanged,
+		PortChanges:       context.PortChanges,
+		ServiceKey:        context.ServiceKey,
+	}
+
+	// Marshal to JSON with proper formatting for block scalar
+	jsonBytes, err := json.MarshalIndent(serializable, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal change context: %w", err)
+	}
+
+	return string(jsonBytes), nil
 }
 
-// extractChangeContext extracts ChangeContext from service annotation
+// extractChangeContext extracts ChangeContext from service annotation with backward compatibility
 func extractChangeContext(service *corev1.Service) (*ChangeContext, error) {
 	ann := service.GetAnnotations()
 	if ann == nil {
@@ -182,9 +205,98 @@ func extractChangeContext(service *corev1.Service) (*ChangeContext, error) {
 		}, nil
 	}
 
+	// Try to unmarshal as new format first (without redundant fields)
+	var serializable ChangeContextSerializable
+	if err := json.Unmarshal([]byte(contextJSON), &serializable); err == nil {
+		// Successfully parsed new format, convert to full ChangeContext
+		namespace, name := parseServiceKey(serializable.ServiceKey)
+		return &ChangeContext{
+			IPChanged:         serializable.IPChanged,
+			OldIP:             serializable.OldIP,
+			NewIP:             serializable.NewIP,
+			AnnotationChanged: serializable.AnnotationChanged,
+			OldAnnotation:     serializable.OldAnnotation,
+			NewAnnotation:     serializable.NewAnnotation,
+			SpecChanged:       serializable.SpecChanged,
+			PortChanges:       serializable.PortChanges,
+			ServiceKey:        serializable.ServiceKey,
+			ServiceNamespace:  namespace,
+			ServiceName:       name,
+		}, nil
+	}
+
+	// Fallback: try to unmarshal as old format (with redundant fields)
 	var context ChangeContext
 	if err := json.Unmarshal([]byte(contextJSON), &context); err != nil {
 		return nil, fmt.Errorf("failed to deserialize change context: %w", err)
+	}
+
+	// Ensure ServiceNamespace and ServiceName are populated
+	if context.ServiceNamespace == "" || context.ServiceName == "" {
+		namespace, name := parseServiceKey(context.ServiceKey)
+		context.ServiceNamespace = namespace
+		context.ServiceName = name
+	}
+
+	return &context, nil
+}
+
+// parseServiceKey extracts namespace and name from a service key (format: "namespace/name")
+func parseServiceKey(serviceKey string) (namespace, name string) {
+	parts := strings.SplitN(serviceKey, "/", 2)
+	if len(parts) == 2 {
+		return parts[0], parts[1]
+	}
+	// Fallback if format is unexpected
+	return serviceKey, ""
+}
+
+// SerializeChangeContextForTest is a test helper function to expose serialization
+func SerializeChangeContextForTest(context *ChangeContext) (string, error) {
+	return serializeChangeContext(context)
+}
+
+// ExtractChangeContextForTest is a test helper function to expose extraction with fallback
+func ExtractChangeContextForTest(contextJSON, fallbackNamespace, fallbackName string) (*ChangeContext, error) {
+	if contextJSON == "" {
+		return &ChangeContext{
+			ServiceKey:       fmt.Sprintf("%s/%s", fallbackNamespace, fallbackName),
+			ServiceNamespace: fallbackNamespace,
+			ServiceName:      fallbackName,
+		}, nil
+	}
+
+	// Try to unmarshal as new format first (without redundant fields)
+	var serializable ChangeContextSerializable
+	if err := json.Unmarshal([]byte(contextJSON), &serializable); err == nil {
+		// Successfully parsed new format, convert to full ChangeContext
+		namespace, name := parseServiceKey(serializable.ServiceKey)
+		return &ChangeContext{
+			IPChanged:         serializable.IPChanged,
+			OldIP:             serializable.OldIP,
+			NewIP:             serializable.NewIP,
+			AnnotationChanged: serializable.AnnotationChanged,
+			OldAnnotation:     serializable.OldAnnotation,
+			NewAnnotation:     serializable.NewAnnotation,
+			SpecChanged:       serializable.SpecChanged,
+			PortChanges:       serializable.PortChanges,
+			ServiceKey:        serializable.ServiceKey,
+			ServiceNamespace:  namespace,
+			ServiceName:       name,
+		}, nil
+	}
+
+	// Fallback: try to unmarshal as old format (with redundant fields)
+	var context ChangeContext
+	if err := json.Unmarshal([]byte(contextJSON), &context); err != nil {
+		return nil, fmt.Errorf("failed to deserialize change context: %w", err)
+	}
+
+	// Ensure ServiceNamespace and ServiceName are populated
+	if context.ServiceNamespace == "" || context.ServiceName == "" {
+		namespace, name := parseServiceKey(context.ServiceKey)
+		context.ServiceNamespace = namespace
+		context.ServiceName = name
 	}
 
 	return &context, nil

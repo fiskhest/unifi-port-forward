@@ -560,8 +560,15 @@ func TestReconcile_RouterCommunication_Failures(t *testing.T) {
 	// Also set change context annotation to simulate IP change detection
 	updateTestService.Spec.LoadBalancerIP = "192.168.1.201" // Different IP
 
-	// Set change context annotation to simulate IP change detection
-	changeContextJSON := `{"service_key":"default/update-test","ip_changed":true,"old_ip":"192.168.1.200","new_ip":"192.168.1.201"}`
+	// Set change context annotation to simulate IP change detection (using new format)
+	changeContextJSON := `{
+  "ip_changed": true,
+  "old_ip": "192.168.1.200",
+  "new_ip": "192.168.1.201",
+  "annotation_changed": false,
+  "spec_changed": false,
+  "service_key": "default/update-test"
+}`
 	if updateTestService.Annotations == nil {
 		updateTestService.Annotations = make(map[string]string)
 	}

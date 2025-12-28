@@ -12,7 +12,7 @@ import (
 // FilterAnnotation is the annotation key for enabling port forwarding
 const (
 	FilterAnnotation          = "kube-port-forward-controller/ports"
-	FinalizerAnnotation       = "kube-port-forward-controller/finalizer"
+	FinalizerAnnotation       = "kube-port-forward-controller/port-forward-cleanup"
 	CleanupStatusAnnotation   = "kube-port-forward-controller/cleanup-status"
 	CleanupAttemptsAnnotation = "kube-port-forward-controller/cleanup-attempts"
 )
