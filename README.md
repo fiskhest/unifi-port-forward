@@ -264,4 +264,4 @@ The controller provides detailed debug output:
 
 ## License
 
-[Add your license information here]
+MIT License - see [LICENSE](LICENSE) file for details
