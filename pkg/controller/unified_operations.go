@@ -78,6 +78,18 @@ func (r *PortForwardReconciler) calculateDelta(currentRules []*unifi.PortForward
 	var operations []PortOperation
 	servicePrefix := fmt.Sprintf("%s/%s:", service.Namespace, service.Name)
 
+	// Detect conflicts with existing manual rules first
+	conflictOperations := r.detectPortConflicts(currentRules, desiredConfigs, service)
+	operations = append(operations, conflictOperations...)
+
+	// Track ports that are already being handled by conflict operations
+	// This prevents generating duplicate CREATE operations for ports that will be updated
+	conflictPorts := make(map[string]bool)
+	for _, op := range conflictOperations {
+		portKey := fmt.Sprintf("%d-%d-%s", op.Config.DstPort, op.Config.FwdPort, op.Config.Protocol)
+		conflictPorts[portKey] = true
+	}
+
 	// Build maps for efficient lookup
 	// Create map of desired port configurations using dstPort-fwdPort-protocol as key
 	// This key format ensures uniqueness for port forward rules and matches router state format
@@ -123,6 +135,12 @@ func (r *PortForwardReconciler) calculateDelta(currentRules []*unifi.PortForward
 
 	// Find creations and updates
 	for portKey, desiredConfig := range desiredMap {
+		// Skip ports that are already being handled by conflict operations
+		// This prevents duplicate CREATE operations for ports that will be updated via conflict resolution
+		if conflictPorts[portKey] {
+			continue
+		}
+
 		if existingRule, exists := currentMap[portKey]; !exists {
 			operations = append(operations, PortOperation{
 				Type:   OpCreate,
@@ -156,7 +174,8 @@ func (r *PortForwardReconciler) executeOperations(ctx context.Context, operation
 	var completedOperations []PortOperation
 
 	ctrllog.FromContext(ctx).Info("Executing port operations",
-		"total_operations", len(operations))
+		"total_operations", len(operations),
+		"ownership_takeovers", countOwnershipTakeovers(operations))
 
 	for _, op := range operations {
 		var err error
@@ -273,4 +292,84 @@ func (r *PortForwardReconciler) calculateDesiredState(service *corev1.Service) (
 	}
 
 	return portConfigs, nil
+}
+
+// detectPortConflicts finds existing rules that conflict with desired ports but have different names
+func (r *PortForwardReconciler) detectPortConflicts(currentRules []*unifi.PortForward, desiredConfigs []routers.PortConfig, service *corev1.Service) []PortOperation {
+	var operations []PortOperation
+	servicePrefix := fmt.Sprintf("%s/%s:", service.Namespace, service.Name)
+	logger := ctrllog.FromContext(context.Background()).WithValues("service", service.Name, "namespace", service.Namespace)
+
+	// Build map of desired port configurations using dstPort-fwdPort-protocol as key
+	// This ensures we only detect true conflicts where both external and internal ports match
+	desiredMap := make(map[string]routers.PortConfig)
+	for _, config := range desiredConfigs {
+		portKey := fmt.Sprintf("%d-%d-%s", config.DstPort, config.FwdPort, config.Protocol)
+		desiredMap[portKey] = config
+	}
+
+	// Check each current rule for conflicts
+	for _, rule := range currentRules {
+		dstPort := r.parseIntField(rule.DstPort)
+		fwdPort := r.parseIntField(rule.FwdPort)
+
+		// Skip if this rule is already owned by this service
+		if strings.HasPrefix(rule.Name, servicePrefix) {
+			continue
+		}
+
+		// Check if this exact port configuration conflicts with our desired rules
+		// Use same key format as calculateDelta for consistency: dstPort-fwdPort-protocol
+		portKey := fmt.Sprintf("%d-%d-%s", dstPort, fwdPort, rule.Proto)
+		if desiredConfig, conflict := desiredMap[portKey]; conflict {
+			// Found a true conflict - both external and internal ports match
+			logger.Info("Port conflict detected - will take ownership",
+				"existing_rule", rule.Name,
+				"existing_dst_port", dstPort,
+				"existing_fwd_port", fwdPort,
+				"existing_protocol", rule.Proto,
+				"new_rule_name", desiredConfig.Name,
+				"service", service.Name,
+				"namespace", service.Namespace)
+
+			operations = append(operations, PortOperation{
+				Type:         OpUpdate, // Update to take ownership
+				Config:       desiredConfig,
+				ExistingRule: rule,
+				Reason:       "port_conflict_take_ownership",
+			})
+		}
+	}
+
+	if len(operations) > 0 {
+		logger.Info("Detected port conflicts with existing manual rules",
+			"conflict_count", len(operations),
+			"service", service.Name,
+			"namespace", service.Namespace)
+
+		for _, op := range operations {
+			logger.Info("Port conflict detected - will take ownership",
+				"existing_rule", op.ExistingRule.Name,
+				"existing_dst_port", op.ExistingRule.DstPort,
+				"existing_fwd_port", op.ExistingRule.FwdPort,
+				"existing_protocol", op.ExistingRule.Proto,
+				"new_rule_name", op.Config.Name,
+				"external_port", op.Config.DstPort,
+				"fwd_port", op.Config.FwdPort,
+				"protocol", op.Config.Protocol)
+		}
+	}
+
+	return operations
+}
+
+// countOwnershipTakeovers counts operations that are ownership takeovers
+func countOwnershipTakeovers(operations []PortOperation) int {
+	count := 0
+	for _, op := range operations {
+		if op.Reason == "port_conflict_take_ownership" {
+			count++
+		}
+	}
+	return count
 }

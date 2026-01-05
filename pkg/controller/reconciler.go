@@ -120,7 +120,24 @@ func (r *PortForwardReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	}
 
 	// Use unified change processing
-	return r.processAllChanges(ctx, service, changeContext)
+	operations, result, err := r.processAllChanges(ctx, service, changeContext)
+	if err != nil {
+		return result, err
+	}
+
+	// Publish ownership-taking events
+	if r.EventPublisher != nil {
+		for _, op := range operations {
+			if op.Reason == "port_conflict_take_ownership" {
+				oldRuleName := op.ExistingRule.Name
+				newRuleName := op.Config.Name
+				r.EventPublisher.PublishPortForwardTakenOwnershipEvent(ctx, service, changeContext,
+					oldRuleName, newRuleName, op.Config.DstPort, op.Config.Protocol)
+			}
+		}
+	}
+
+	return result, nil
 }
 
 // handleServiceDeletion handles service deletion cleanup for services without finalizers
@@ -206,7 +223,7 @@ func (r *PortForwardReconciler) shouldProcessService(ctx context.Context, servic
 }
 
 // processAllChanges handles the unified processing of all service changes
-func (r *PortForwardReconciler) processAllChanges(ctx context.Context, service *corev1.Service, changeContext *ChangeContext) (ctrl.Result, error) {
+func (r *PortForwardReconciler) processAllChanges(ctx context.Context, service *corev1.Service, changeContext *ChangeContext) ([]PortOperation, ctrl.Result, error) {
 	logger := ctrllog.FromContext(ctx).WithValues(
 		"namespace", service.Namespace,
 		"name", service.Name,
@@ -231,14 +248,14 @@ func (r *PortForwardReconciler) processAllChanges(ctx context.Context, service *
 			logger.Error(updateErr, "Failed to update error context for validation failure")
 		}
 
-		return ctrl.Result{}, err
+		return nil, ctrl.Result{}, err
 	}
 
 	// Step 2: Get current state from router
 	currentRules, err := r.Router.ListAllPortForwards(ctx)
 	if err != nil {
 		logger.Error(err, "Failed to list current port forwards")
-		return ctrl.Result{}, err
+		return nil, ctrl.Result{}, err
 	}
 
 	// Step 3: Calculate delta using unified algorithm
@@ -280,7 +297,7 @@ func (r *PortForwardReconciler) processAllChanges(ctx context.Context, service *
 			}
 		}
 
-		return ctrl.Result{}, err
+		return nil, ctrl.Result{}, err
 	} else {
 		// Clear error context on success
 		if err := clearErrorContextAnnotation(ctx, r.Client, service); err != nil {
@@ -332,7 +349,7 @@ func (r *PortForwardReconciler) processAllChanges(ctx context.Context, service *
 		}
 	}
 
-	return ctrl.Result{}, nil
+	return operations, ctrl.Result{}, nil
 }
 
 // handleFinalizerCleanup performs cleanup when service is being deleted with finalizer
