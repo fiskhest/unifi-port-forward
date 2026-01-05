@@ -12,6 +12,8 @@ import (
 	"syscall"
 	"time"
 
+	"unifi-port-forwarder/pkg/config"
+
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -322,7 +324,7 @@ func (d *ServiceDebugger) hasPortForwardAnnotation(service *corev1.Service) stri
 	if service.Annotations == nil {
 		return ""
 	}
-	return service.Annotations["kube-port-forward-controller/ports"]
+	return service.Annotations[config.FilterAnnotation]
 }
 
 // ipSlicesEqual checks if two string slices are equal
@@ -390,7 +392,7 @@ func (d *ServiceDebugger) logChangeText(change IPChange) {
 	}
 
 	fmt.Printf("   LB_STATUS: %d ingress entries\n", change.NumIngress)
-	fmt.Printf("   ANNOTATIONS: kube-port-forward-controller/ports=%s\n", change.AnnotationValue)
+	fmt.Printf("   ANNOTATIONS: %s=%s\n", config.FilterAnnotation, change.AnnotationValue)
 
 	// Add warnings for potential issues
 	if change.IPType == "multiple" {

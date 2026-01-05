@@ -6,7 +6,7 @@ import (
 	"log"
 	"strconv"
 
-	"kube-router-port-forward/pkg/routers"
+	"unifi-port-forwarder/pkg/routers"
 )
 
 // Config holds cleaner configuration

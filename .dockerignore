@@ -21,7 +21,7 @@ test-manifest.yaml
 
 # Build artifacts
 *.exe
-kube-port-forward-controller
+unifi-port-forwarder
 service-debugger
 cleaner
 

@@ -1,4 +1,4 @@
-# kube-port-forward-controller
+# unifi-port-forwarder
 
 Kubernetes controller for automatically configuring router settings to port forward services. 
 
@@ -6,7 +6,7 @@ A wise man once said that writing automation for managing ones router would be a
 
 It has always been a wish of mine to learn how to implement kubernetes controllers. Once I realised UCG Max supports BGP and could be used to roll out metallb to automate IP allocation on a different subnet in my cluster, I had the perfect reason to investigate.
 
-This controller will look for any `LoadBalancer` objects annotated with `kube-port-forward-controller/ports`. It will inspect the currently provisioned Port Forward rules on the Unifi router, either updating or ensuring that port forward rules match with the service object spec and annotation rule.
+This controller will look for any `LoadBalancer` objects annotated with `unifi-port-forwarder/ports`. It will inspect the currently provisioned Port Forward rules on the Unifi router, either updating or ensuring that port forward rules match with the service object spec and annotation rule.
 
 The controller does not delete other rules (as long as they don't use conflicting names) and has a small footprint.
 
@@ -33,7 +33,7 @@ kind: Service
 metadata:
   name: web-service
   annotations:
-    kube-port-forward-controller/ports: "http:8080"
+    unifi-port-forwarder/ports: "http:8080"
 spec:
   selector:
     app: web-service
@@ -51,7 +51,7 @@ kind: Service
 metadata:
   name: full-service
   annotations:
-    kube-port-forward-controller/ports: "http:8080,https:8443,metrics:9090"
+    unifi-port-forwarder/ports: "http:8080,https:8443,metrics:9090"
 spec:
   selector:
     app: full-service
@@ -71,13 +71,13 @@ spec:
 #### Default Port Mapping
 ```yaml
 # Use service port as external port
-kube-port-forward-controller/ports: "http,https,metrics"
+unifi-port-forwarder/ports: "http,https,metrics"
 ```
 
 #### Mixed Mapping
 ```yaml
 # Some custom, some default
-kube-port-forward-controller/ports: "http:8080,https,metrics:9090"
+unifi-port-forwarder/ports: "http:8080,https,metrics:9090"
 ```
 
 ### Annotation Format
@@ -97,7 +97,7 @@ metadata:
   name: web-service
   namespace: production
   annotations:
-    kube-port-forward-controller/ports: "http:80,https:443"
+    unifi-port-forwarder/ports: "http:80,https:443"
 spec:
   selector:
     app: web-service
@@ -121,7 +121,7 @@ metadata:
   name: app-service
   namespace: development
   annotations:
-    kube-port-forward-controller/ports: "web:3000,api:8080,metrics:9090"
+    unifi-port-forwarder/ports: "web:3000,api:8080,metrics:9090"
 spec:
   selector:
     app: app-service
@@ -144,7 +144,7 @@ spec:
 ## Behavior
 
 ### Services Without Annotation
-Services without the `kube-port-forward-controller/ports` annotation are **completely skipped** - no port forwarding rules are created.
+Services without the `unifi-port-forwarder/ports` annotation are **completely skipped** - no port forwarding rules are created.
 
 ### Port Conflict Detection
 The controller prevents external port conflicts across different services. If two services try to use the same external port, the second service will fail with an error message.
@@ -158,7 +158,7 @@ The controller prevents external port conflicts across different services. If tw
 
 If you have existing single-port services:
 
-1. **Add annotation**: Add `kube-port-forward-controller/ports: "servicename:externalport"`
+1. **Add annotation**: Add `unifi-port-forwarder/ports: "servicename:externalport"`
 2. **Port name**: Use the service port name from your service definition
 3. **External port**: Specify the desired external port
 
@@ -166,14 +166,14 @@ If you have existing single-port services:
 
 ## CLI Commands
 
-The `kube-port-forward-controller` provides four commands:
+The `unifi-port-forwarder` provides four commands:
 
 ### controller (default)
 Run Kubernetes controller for automatic port forwarding:
 ```bash
-./kube-port-forward-controller controller
+./unifi-port-forwarder controller
 # or simply
-./kube-port-forward-controller
+./unifi-port-forwarder
 ```
 
 ### debug
@@ -181,14 +181,14 @@ Monitor Kubernetes services for debugging purposes:
 ### service-debugger
 Monitor Kubernetes services for IP changes and debug LoadBalancer IP issues:
 ```bash
-./kube-port-forward-controller service-debugger --namespace=default --log-level=debug
-./kube-port-forward-controller service-debugger -labels="app=web" --output=json
+./unifi-port-forwarder service-debugger --namespace=default --log-level=debug
+./unifi-port-forwarder service-debugger -labels="app=web" --output=json
 ```
 
 ### clean
 Clean up specific port forwarding rules:
 ```bash
-./kube-port-forward-controller clean --port-mappings="83:192.168.27.130"
+./unifi-port-forwarder clean --port-mappings="83:192.168.27.130"
 ```
 
 For detailed cleaner documentation, see [cmd/cleaner/README.md](cmd/cleaner/README.md).
@@ -219,7 +219,7 @@ just test
 ### Kubernetes Installation
 
 **Prerequisites**
-- Create the namespace: `kubectl create namespace kube-port-forward-controller`
+- Create the namespace: `kubectl create namespace unifi-port-forwarder`
 
 **Customize Environment Variables**
 Edit `manifests/deployment.yaml` and update the environment variables in the container spec:

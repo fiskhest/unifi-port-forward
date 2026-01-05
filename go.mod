@@ -1,4 +1,4 @@
-module kube-router-port-forward
+module unifi-port-forwarder
 
 go 1.23.6
 

@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"kube-router-port-forward/pkg/helpers"
-	"kube-router-port-forward/testutils"
+	"unifi-port-forwarder/pkg/helpers"
+	"unifi-port-forwarder/testutils"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"

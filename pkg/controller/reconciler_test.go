@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"testing"
 
-	"kube-router-port-forward/pkg/config"
+	"unifi-port-forwarder/pkg/config"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -572,7 +572,7 @@ func TestReconcile_RouterCommunication_Failures(t *testing.T) {
 	if updateTestService.Annotations == nil {
 		updateTestService.Annotations = make(map[string]string)
 	}
-	updateTestService.Annotations["kube-port-forward-controller/change-context"] = changeContextJSON
+	updateTestService.Annotations["unifi-port-forwarder/change-context"] = changeContextJSON
 
 	if err := env.UpdateService(ctx, updateTestService); err != nil {
 		t.Fatalf("Failed to update service for UpdatePort test: %v", err)

@@ -1,48 +1,45 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: kube-router-port-forward
-  namespace: kube-port-forward-controller
+  name: unifi-port-forwarder
+  namespace: unifi-port-forwarder
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: kube-router-port-forward
+      app: unifi-port-forwarder
   template:
     metadata:
       labels:
-        app: kube-router-port-forward
+        app: unifi-port-forwarder
     spec:
       hostNetwork: true
       dnsPolicy: ClusterFirstWithHostNet
-      serviceAccountName: kube-router-port-forward
+      serviceAccountName: unifi-port-forwarder
       containers:
-        - name: kube-router-port-forward
-          image: johrad/kube-router-port-forward
+        - name: unifi-port-forwarder
+          image: johrad/unifi-port-forwarder
           imagePullPolicy: Always
           env:
             - name: UNIFI_USERNAME
-              value: kube-port-forward-controller
+              value: unifi-port-forwarder
             - name: UNIFI_ROUTER_IP
               value: 192.168.27.1
             - name: UNIFI_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: unifi-credentials
-                  key: pass
+              value: q4Fz\5#hdhaMHc.TL6UNMX+$
             - name: DEBUG
               value: "True"
 ---
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: kube-router-port-forward
-  namespace: kube-port-forward-controller
+  name: unifi-port-forwarder
+  namespace: unifi-port-forwarder
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: kube-router-port-forward
+  name: unifi-port-forwarder
 rules:
   - apiGroups: [""]
     resources: ["services"]
@@ -57,12 +54,12 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: kube-router-port-forward
+  name: unifi-port-forwarder
 subjects:
   - kind: ServiceAccount
-    name: kube-router-port-forward
-    namespace: kube-port-forward-controller
+    name: unifi-port-forwarder
+    namespace: unifi-port-forwarder
 roleRef:
   kind: ClusterRole
-  name: kube-router-port-forward
+  name: unifi-port-forwarder
   apiGroup: rbac.authorization.k8s.io

@@ -7,7 +7,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"kube-router-port-forward/pkg/routers"
+	"unifi-port-forwarder/pkg/routers"
 )
 
 func TestChangeDetection_IPChange(t *testing.T) {
@@ -363,7 +363,7 @@ func TestExtractErrorContext(t *testing.T) {
 			Name:      "test-service",
 			Namespace: "test-namespace",
 			Annotations: map[string]string{
-				"kube-port-forward-controller/error-context": `{
+				"unifi-port-forwarder/error-context": `{
   "timestamp": "2023-12-28T10:30:00Z",
   "last_failure_time": "2023-12-28T10:25:00Z",
   "overall_status": "partial_failure",
@@ -404,7 +404,7 @@ func TestErrorContextLifecycle(t *testing.T) {
 			Name:      "test-service",
 			Namespace: "test-namespace",
 			Annotations: map[string]string{
-				"kube-port-forward-controller/error-context": `{"overall_status":"partial_failure"}`,
+				"unifi-port-forwarder/error-context": `{"overall_status":"partial_failure"}`,
 			},
 		},
 	}
@@ -420,7 +420,7 @@ func TestErrorContextLifecycle(t *testing.T) {
 	}
 
 	// Clear error context annotation
-	delete(service.Annotations, "kube-port-forward-controller/error-context")
+	delete(service.Annotations, "unifi-port-forwarder/error-context")
 
 	// Should return nil after clearing
 	errorContext, err = extractErrorContext(service)

@@ -1,5 +1,5 @@
 variable "REGISTRY" {
-  default = "johrad/kube-router-port-forward"
+  default = "johrad/unifi-port-forwarder"
 }
 
 group "default" {

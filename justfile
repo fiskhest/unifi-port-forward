@@ -1,5 +1,5 @@
 # =============================================================================
-# kube-port-forward-controller Justfile
+# unifi-port-forwarder Justfile
 # =============================================================================
 # Kubernetes controller for automatic router port forwarding configuration
 #

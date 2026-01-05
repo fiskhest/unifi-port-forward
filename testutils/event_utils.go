@@ -280,7 +280,7 @@ func (h *EventTestHelper) ExtractEventData(event corev1.Event) (*PortForwardEven
 		return nil, fmt.Errorf("event has no annotations")
 	}
 
-	eventDataStr := event.Annotations["kube-port-forward-controller/event-data"]
+	eventDataStr := event.Annotations["unifi-port-forwarder/event-data"]
 	if eventDataStr == "" {
 		return nil, fmt.Errorf("event has no event-data annotation")
 	}
@@ -298,7 +298,7 @@ func (h *EventTestHelper) ExtractChangeContext(event corev1.Event) (*ChangeConte
 		return nil, fmt.Errorf("event has no annotations")
 	}
 
-	contextStr := event.Annotations["kube-port-forward-controller/change-context"]
+	contextStr := event.Annotations["unifi-port-forwarder/change-context"]
 	if contextStr == "" {
 		return nil, fmt.Errorf("event has no change-context annotation")
 	}

@@ -7,10 +7,10 @@ import (
 
 	"github.com/filipowm/go-unifi/unifi"
 	corev1 "k8s.io/api/core/v1"
-	"kube-router-port-forward/pkg/config"
-	"kube-router-port-forward/pkg/helpers"
-	"kube-router-port-forward/pkg/routers"
 	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
+	"unifi-port-forwarder/pkg/config"
+	"unifi-port-forwarder/pkg/helpers"
+	"unifi-port-forwarder/pkg/routers"
 )
 
 /*

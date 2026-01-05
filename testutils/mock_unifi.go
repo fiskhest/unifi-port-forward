@@ -3,6 +3,7 @@ package testutils
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"sync"
 
 	"github.com/filipowm/go-unifi/unifi"
@@ -10,10 +11,11 @@ import (
 
 // MockUniFiClient implements a mock UniFi client for testing
 type MockUniFiClient struct {
-	PortForwards []unifi.PortForward
-	mu           sync.RWMutex
-	LoginCalled  bool
-	version      string
+	PortForwards   []unifi.PortForward
+	mu             sync.RWMutex
+	LoginCalled    bool
+	version        string
+	shouldFailAuth bool
 }
 
 // NewMockUniFiClient creates a new mock UniFi client
@@ -32,6 +34,13 @@ func (m *MockUniFiClient) Login() error {
 	return nil
 }
 
+// SetAuthFailure sets whether the next API call should fail with 401
+func (m *MockUniFiClient) SetAuthFailure(shouldFail bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.shouldFailAuth = shouldFail
+}
+
 // Version returns the mock controller version
 func (m *MockUniFiClient) Version() string {
 	return m.version
@@ -39,6 +48,16 @@ func (m *MockUniFiClient) Version() string {
 
 // ListPortForward returns the list of port forward rules
 func (m *MockUniFiClient) ListPortForward(ctx context.Context, siteID string) ([]unifi.PortForward, error) {
+	if m.shouldFailAuth {
+		m.mu.Lock()
+		m.shouldFailAuth = false // Reset after first call
+		m.mu.Unlock()
+		return nil, &unifi.ServerError{
+			StatusCode: http.StatusUnauthorized,
+			Message:    "Authentication failed",
+		}
+	}
+
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -49,6 +68,16 @@ func (m *MockUniFiClient) ListPortForward(ctx context.Context, siteID string) ([
 
 // CreatePortForward creates a new port forward rule
 func (m *MockUniFiClient) CreatePortForward(ctx context.Context, siteID string, pf *unifi.PortForward) (*unifi.PortForward, error) {
+	if m.shouldFailAuth {
+		m.mu.Lock()
+		m.shouldFailAuth = false // Reset after first call
+		m.mu.Unlock()
+		return nil, &unifi.ServerError{
+			StatusCode: http.StatusUnauthorized,
+			Message:    "Authentication failed",
+		}
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -68,8 +97,46 @@ func (m *MockUniFiClient) CreatePortForward(ctx context.Context, siteID string, 
 	return &newPF, nil
 }
 
+// UpdatePortForward updates a port forward rule
+func (m *MockUniFiClient) UpdatePortForward(ctx context.Context, siteID string, pf *unifi.PortForward) (*unifi.PortForward, error) {
+	if m.shouldFailAuth {
+		m.mu.Lock()
+		m.shouldFailAuth = false // Reset after first call
+		m.mu.Unlock()
+		return nil, &unifi.ServerError{
+			StatusCode: http.StatusUnauthorized,
+			Message:    "Authentication failed",
+		}
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Find and update existing rule
+	for i, existing := range m.PortForwards {
+		if existing.ID == pf.ID {
+			updated := *pf
+			updated.SiteID = siteID
+			m.PortForwards[i] = updated
+			return &updated, nil
+		}
+	}
+
+	return nil, fmt.Errorf("port forward rule with ID %s not found", pf.ID)
+}
+
 // DeletePortForward deletes a port forward rule
 func (m *MockUniFiClient) DeletePortForward(ctx context.Context, siteID, ruleID string) error {
+	if m.shouldFailAuth {
+		m.mu.Lock()
+		m.shouldFailAuth = false // Reset after first call
+		m.mu.Unlock()
+		return &unifi.ServerError{
+			StatusCode: http.StatusUnauthorized,
+			Message:    "Authentication failed",
+		}
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 

@@ -13,10 +13,11 @@ import (
 )
 
 const (
-	EventPortForwardCreated = "PortForwardCreated"
-	EventPortForwardUpdated = "PortForwardUpdated"
-	EventPortForwardDeleted = "PortForwardDeleted"
-	EventPortForwardFailed  = "PortForwardFailed"
+	EventPortForwardCreated        = "PortForwardCreated"
+	EventPortForwardUpdated        = "PortForwardUpdated"
+	EventPortForwardDeleted        = "PortForwardDeleted"
+	EventPortForwardFailed         = "PortForwardFailed"
+	EventPortForwardTakenOwnership = "PortForwardTakenOwnership"
 )
 
 type PortForwardEventData struct {
@@ -185,12 +186,12 @@ func (ep *EventPublisher) createEvent(ctx context.Context, service *corev1.Servi
 	annotations := map[string]string{}
 	if changeContext != nil {
 		if contextJSON, err := json.Marshal(changeContext); err == nil {
-			annotations["kube-port-forward-controller/change-context"] = string(contextJSON)
+			annotations["unifi-port-forwarder/change-context"] = string(contextJSON)
 		}
 	}
 
 	if eventDataJSON, err := json.Marshal(eventData); err == nil {
-		annotations["kube-port-forward-controller/event-data"] = string(eventDataJSON)
+		annotations["unifi-port-forwarder/event-data"] = string(eventDataJSON)
 	}
 
 	logger.V(1).Info("DEBUG: createEvent called", "recorder_nil", ep.recorder == nil, "annotations_count", len(annotations))
@@ -216,4 +217,29 @@ func (ep *EventPublisher) createEvent(ctx context.Context, service *corev1.Servi
 	logger.V(1).Info("Event published", "event_type", eventType, "service", service.Name, "message", message)
 
 	return nil
+}
+
+func (ep *EventPublisher) PublishPortForwardTakenOwnershipEvent(ctx context.Context, service *corev1.Service, changeContext *ChangeContext, oldRuleName, newRuleName string, externalPort int, protocol string) {
+	logger := ctrllog.FromContext(ctx).WithValues("service", service.Name, "namespace", service.Namespace)
+
+	eventData := &PortForwardEventData{
+		ServiceKey:       fmt.Sprintf("%s/%s", service.Namespace, service.Name),
+		ServiceNamespace: service.Namespace,
+		ServiceName:      service.Name,
+		PortMapping:      fmt.Sprintf("%d:%d", externalPort, externalPort),
+		ExternalPort:     externalPort,
+		Protocol:         protocol,
+		Reason:           "PortConflictTakeOwnership",
+		Message:          fmt.Sprintf("Renamed manual rule '%s' to '%s' (port %d, %s)", oldRuleName, newRuleName, externalPort, protocol),
+	}
+
+	message := fmt.Sprintf("Took ownership of existing port forward rule: %s service: %s - renamed from '%s' to '%s'",
+		eventData.Message, service.Name, oldRuleName, newRuleName)
+
+	if err := ep.createEvent(ctx, service, EventPortForwardTakenOwnership, message, eventData, changeContext); err != nil {
+		logger.Error(err, "Failed to publish PortForwardTakenOwnership event")
+	} else {
+		logger.Info("Published PortForwardTakenOwnership event",
+			"old_rule", oldRuleName, "new_rule", newRuleName, "external_port", externalPort)
+	}
 }

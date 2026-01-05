@@ -4,14 +4,14 @@ A CLI command for cleaning up specific port forwarding rules from UniFi routers.
 
 ## Overview
 
-The cleaner is integrated into the main `kube-port-forward-controller` binary as a `clean` command. It connects to a UniFi router and removes specific port forwarding rules based on provided port mappings.
+The cleaner is integrated into the main `unifi-port-forwarder` binary as a `clean` command. It connects to a UniFi router and removes specific port forwarding rules based on provided port mappings.
 
 ## Usage
 
 ### CLI Command
 
 ```bash
-./kube-port-forward-controller clean [flags]
+./unifi-port-forwarder clean [flags]
 ```
 
 ### Required Flags
@@ -25,14 +25,14 @@ The cleaner is integrated into the main `kube-port-forward-controller` binary as
 
 #### Single Port Mapping (CLI Flag)
 ```bash
-./kube-port-forward-controller clean \
+./unifi-port-forwarder clean \
   --port-mappings="83:192.168.27.130" \
   --password "your_password"
 ```
 
 #### Multiple Port Mappings (CLI Flag)
 ```bash
-./kube-port-forward-controller clean \
+./unifi-port-forwarder clean \
   --port-mappings="83:192.168.27.130,8080:192.168.27.131,443:192.168.27.132" \
   --password "your_password"
 ```
@@ -50,7 +50,7 @@ mappings:
     destination-ip: "192.168.27.132"
 EOF
 
-./kube-port-forward-controller clean \
+./unifi-port-forwarder clean \
   --port-mappings-file="port-mappings.yaml" \
   --password "your_password"
 ```
@@ -73,7 +73,7 @@ cat > port-mappings.json <<EOF
 }
 EOF
 
-./kube-port-forward-controller clean \
+./unifi-port-forwarder clean \
   --port-mappings-file="port-mappings.json" \
   --password "your_password"
 ```
@@ -85,7 +85,7 @@ export UNIFI_USERNAME="admin"
 export UNIFI_PASSWORD="your_password"
 export UNIFI_SITE="default"
 
-./kube-port-forward-controller clean \
+./unifi-port-forwarder clean \
   --port-mappings="80:192.168.27.130,443:192.168.27.130"
 ```
 
@@ -130,7 +130,7 @@ mappings:
 
 ## Integration with Main Controller
 
-The cleaner complements the main kube-port-forward-controller:
+The cleaner complements the main unifi-port-forwarder:
 
 1. **Controller creates rules automatically** based on Kubernetes service annotations
 2. **Cleaner removes specific rules manually** when needed

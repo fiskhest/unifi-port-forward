@@ -1,27 +1,27 @@
 # Service IP Debugger
 
-A utility to monitor Kubernetes service IP changes and debug LoadBalancer IP issues in the kube-port-forward-controller.
+A utility to monitor Kubernetes service IP changes and debug LoadBalancer IP issues in the unifi-port-forwarder.
 
 ## Usage
 
 ```bash
 # Monitor all services
-./kube-port-forward-controller service-debugger
+./unifi-port-forwarder service-debugger
 
 # Monitor specific namespace
-./kube-port-forward-controller service-debugger -namespace=default
+./unifi-port-forwarder service-debugger -namespace=default
 
 # Monitor services with specific labels
-./kube-port-forward-controller service-debugger -labels=app=web
+./unifi-port-forwarder service-debugger -labels=app=web
 
 # JSON output for parsing
-./kube-port-forward-controller service-debugger -output=json
+./unifi-port-forwarder service-debugger -output=json
 
 # Debug mode with verbose logging
-./kube-port-forward-controller service-debugger -log-level=debug
+./unifi-port-forwarder service-debugger -log-level=debug
 
 # Custom polling interval
-./kube-port-forward-controller service-debugger -interval=10s
+./unifi-port-forwarder service-debugger -interval=10s
 ```
 
 ## Command Line Options
@@ -40,13 +40,13 @@ A utility to monitor Kubernetes service IP changes and debug LoadBalancer IP iss
 🟢 [2025-01-15T10:30:15Z] CREATED default/web-service
    IPs: ["192.168.27.130"] (type: loadbalancer)
    LB_STATUS: 1 ingress entries
-   ANNOTATIONS: kube-port-forward-controller/ports=true
+   ANNOTATIONS: unifi-port-forwarder/ports=true
 
 🔄 [2025-01-15T10:32:45Z] IP_CHANGED default/web-service
    IP_CHANGE: ["192.168.27.130"] -> ["192.168.72.1"]
    IP_TYPE: loadbalancer -> loadbalancer
    LB_STATUS: 1 ingress entries
-   ANNOTATIONS: kube-port-forward-controller/ports=true
+   ANNOTATIONS: unifi-port-forwarder/ports=true
 ```
 
 ### JSON Format
@@ -83,7 +83,7 @@ Monitor services and their LoadBalancer IP assignments:
 ### 2. Port Forwarding Issues
 Check if services with port forwarding annotations have stable IPs:
 ```bash
-./service-debugger -labels="kube-port-forward-controller/ports"
+./service-debugger -labels="unifi-port-forwarder/ports"
 ```
 
 ### 3. Cluster-wide Analysis

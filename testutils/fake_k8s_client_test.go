@@ -5,8 +5,8 @@ import (
 	"testing"
 
 	v1 "k8s.io/api/core/v1"
-	"kube-router-port-forward/pkg/config"
-	"kube-router-port-forward/pkg/helpers"
+	"unifi-port-forwarder/pkg/config"
+	"unifi-port-forwarder/pkg/helpers"
 )
 
 // TestMultiPortService_ValidAnnotation tests multi-port service with valid annotation

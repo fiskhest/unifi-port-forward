@@ -4,13 +4,13 @@
 
 ```bash
 # Monitor all services in all namespaces
-./kube-port-forward-controller service-debugger
+./unifi-port-forwarder service-debugger
 
 # Monitor specific namespace
-./kube-port-forward-controller service-debugger -namespace=default
+./unifi-port-forwarder service-debugger -namespace=default
 
 # Monitor services with port forwarding annotations
-./kube-port-forward-controller service-debugger -labels="kube-port-forward-controller/ports"
+./unifi-port-forwarder service-debugger -labels="unifi-port-forwarder/ports"
 ```
 
 ## Debugging Transient IP Issues
@@ -18,7 +18,7 @@
 ### 1. Monitor New Service Creation
 ```bash
 # Terminal 1: Start debugger
-./kube-port-forward-controller service-debugger -namespace=default -log-level=debug
+./unifi-port-forwarder service-debugger -namespace=default -log-level=debug
 
 # Terminal 2: Create a LoadBalancer service
 kubectl apply -f - <<EOF
@@ -27,7 +27,7 @@ kind: Service
 metadata:
   name: test-lb
   annotations:
-    kube-port-forward-controller/ports: "http:8080"
+    unifi-port-forwarder/ports: "http:8080"
 spec:
   type: LoadBalancer
   ports:
@@ -41,19 +41,19 @@ EOF
 🟢 [2025-01-15T10:30:15Z] CREATED default/test-lb
    IPs: ["192.168.27.130"] (type: loadbalancer)
    LB_STATUS: 1 ingress entries
-   ANNOTATIONS: kube-port-forward-controller/ports=true
+   ANNOTATIONS: unifi-port-forwarder/ports=true
 
 🔄 [2025-01-15T10:32:45Z] IP_CHANGED default/test-lb
    IP_CHANGE: ["192.168.27.130"] -> ["192.168.72.1"]
    IP_TYPE: loadbalancer -> loadbalancer
    LB_STATUS: 1 ingress entries
-   ANNOTATIONS: kube-port-forward-controller/ports=true
+   ANNOTATIONS: unifi-port-forwarder/ports=true
 ```
 
 ### 2. Monitor Multiple Services
 ```bash
 # Monitor all services with port forwarding annotations
-./kube-port-forward-controller service-debugger -labels="kube-port-forward-controller/ports" -output=json
+./unifi-port-forwarder service-debugger -labels="unifi-port-forwarder/ports" -output=json
 
 # This will output JSON for easy parsing and analysis
 ```
@@ -61,7 +61,7 @@ EOF
 ### 3. Track IP Stability
 ```bash
 # Monitor with custom polling interval
-./kube-port-forward-controller service-debugger -interval=10s -history=20
+./unifi-port-forwarder service-debugger -interval=10s -history=20
 
 # This tracks more history and polls less frequently
 ```
@@ -93,7 +93,7 @@ EOF
    IP_CHANGE: ["192.168.72.1"] -> []
    IP_TYPE: loadbalancer
    LB_STATUS: 0 ingress entries
-   ANNOTATIONS: kube-port-forward-controller/ports=false
+   ANNOTATIONS: unifi-port-forwarder/ports=false
 ```
 
 ## Integration with Main Controller
@@ -102,10 +102,10 @@ EOF
 1. **Start both controllers:**
    ```bash
    # Terminal 1: Main controller
-   ./kube-port-forward-controller
+   ./unifi-port-forwarder
    
    # Terminal 2: Debugger
-   ./kube-port-forward-controller service-debugger -namespace=default -log-level=debug
+   ./unifi-port-forwarder service-debugger -namespace=default -log-level=debug
    ```
 
 2. **Create service with port forwarding:**
@@ -122,7 +122,7 @@ EOF
 
 1. **Identify Problem Service:**
    ```bash
-   ./kube-port-forward-controller service-debugger -namespace=default | grep "IP_CHANGED"
+   ./unifi-port-forwarder service-debugger -namespace=default | grep "IP_CHANGED"
    ```
 
 2. **Check IP Classification:**
@@ -144,7 +144,7 @@ EOF
 ### JSON Output for Analysis
 ```bash
 # Export changes for analysis
-./kube-port-forward-controller service-debugger -output=json > service-changes.json
+./unifi-port-forwarder service-debugger -output=json > service-changes.json
 
 # Analyze with jq
 cat service-changes.json | jq '
@@ -162,16 +162,16 @@ cat service-changes.json | jq '
 ### Filter by Multiple Criteria
 ```bash
 # Monitor production services with port forwarding
-./kube-port-forward-controller service-debugger \
+./unifi-port-forwarder service-debugger \
   -namespace=production \
-  -labels="env=prod,kube-port-forward-controller/ports" \
+  -labels="env=prod,unifi-port-forwarder/ports" \
   -log-level=info
 ```
 
 ### Custom Polling for Slow Clusters
 ```bash
 # For clusters with slow LoadBalancer provisioning
-./kube-port-forward-controller service-debugger -interval=30s -history=5
+./unifi-port-forwarder service-debugger -interval=30s -history=5
 ```
 
 ## Exit Summary

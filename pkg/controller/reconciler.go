@@ -6,9 +6,9 @@ import (
 	"strconv"
 	"strings"
 
-	"kube-router-port-forward/pkg/config"
-	"kube-router-port-forward/pkg/helpers"
-	"kube-router-port-forward/pkg/routers"
+	"unifi-port-forwarder/pkg/config"
+	"unifi-port-forwarder/pkg/helpers"
+	"unifi-port-forwarder/pkg/routers"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -534,7 +534,7 @@ func (r *PortForwardReconciler) parseIntField(field string) int {
 // SetupWithManager sets up the controller with a manager
 func (r *PortForwardReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	// Initialize recorder
-	r.Recorder = mgr.GetEventRecorderFor("kube-port-forward-controller")
+	r.Recorder = mgr.GetEventRecorderFor("unifi-port-forwarder")
 
 	// 🆕 Initialize event publisher
 	r.EventPublisher = NewEventPublisher(r.Client, r.Recorder, r.Scheme)

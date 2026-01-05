@@ -15,12 +15,12 @@ import (
 
 	"github.com/go-logr/logr"
 	"github.com/spf13/cobra"
-	"kube-router-port-forward/cmd/cleaner"
-	"kube-router-port-forward/cmd/service-debugger"
-	"kube-router-port-forward/pkg/config"
-	"kube-router-port-forward/pkg/controller"
-	"kube-router-port-forward/pkg/routers"
 	"sigs.k8s.io/yaml"
+	"unifi-port-forwarder/cmd/cleaner"
+	"unifi-port-forwarder/cmd/service-debugger"
+	"unifi-port-forwarder/pkg/config"
+	"unifi-port-forwarder/pkg/controller"
+	"unifi-port-forwarder/pkg/routers"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -34,7 +34,7 @@ var (
 )
 
 var rootCmd = &cobra.Command{
-	Use:           "kube-port-forward-controller [command]",
+	Use:           "unifi-port-forwarder [command]",
 	Short:         "Kubernetes controller for automatic router port forwarding",
 	Long:          `Automatically configures router port forwarding for Kubernetes LoadBalancer services`,
 	SilenceUsage:  true,

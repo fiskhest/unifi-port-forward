@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"kube-router-port-forward/pkg/routers"
+	"unifi-port-forwarder/pkg/routers"
 )
 
 // TestMockRouter_SimulatedFailure tests basic mock router failure logic

@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"kube-router-port-forward/pkg/config"
-	"kube-router-port-forward/pkg/helpers"
-	"kube-router-port-forward/pkg/routers"
+	"unifi-port-forwarder/pkg/config"
+	"unifi-port-forwarder/pkg/helpers"
+	"unifi-port-forwarder/pkg/routers"
 
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -63,10 +63,10 @@ func (c *ChangeContext) HasRelevantChanges() bool {
 }
 
 // ChangeContextAnnotationKey is the key used to store change context in service annotations
-const ChangeContextAnnotationKey = "kube-port-forward-controller/change-context"
+const ChangeContextAnnotationKey = "unifi-port-forwarder/change-context"
 
 // ErrorContextAnnotationKey is key used to store error context in service annotations
-const ErrorContextAnnotationKey = "kube-port-forward-controller/error-context"
+const ErrorContextAnnotationKey = "unifi-port-forwarder/error-context"
 
 // ErrorContext stores persistent error information for service
 type ErrorContext struct {

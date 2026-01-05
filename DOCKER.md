@@ -13,7 +13,7 @@ docker buildx bake
 docker buildx bake controller
 
 # Build with custom tag
-docker buildx bake --set controller.tags=johrad/kube-router-port-forward:v1.0.0
+docker buildx bake --set controller.tags=johrad/unifi-port-forwarder:v1.0.0
 
 # Build and push to registry
 docker buildx bake --push
@@ -26,7 +26,7 @@ docker buildx bake --push
 ## Build Targets
 
 ### controller
-- **Image**: `johrad/kube-router-port-forward:latest`
+- **Image**: `johrad/unifi-port-forwarder:latest`
 - **Architecture**: `linux/amd64`
 
 ## Build Features
@@ -53,9 +53,9 @@ docker run --rm \
   -e UNIFI_ROUTER_IP=192.168.1.1 \
   -e UNIFI_USERNAME=admin \
   -e UNIFI_PASSWORD=mypassword \
-  johrad/kube-router-port-forward:latest
+  johrad/unifi-port-forwarder:latest
 ```
 
 ## Registry
 
-Images are published to: `johrad/kube-router-port-forward`
+Images are published to: `johrad/unifi-port-forwarder`
