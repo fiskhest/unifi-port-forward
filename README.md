@@ -211,7 +211,7 @@ just test
 ## Configuration
 
 ### Environment Variables
-- `UNIFI_ROUTER_IP`: IP address of the router (default: 192.168.27.1)
+- `UNIFI_ROUTER_IP`: IP address of the router (default: 192.168.1.1)
 - `UNIFI_USERNAME`: Router username (default: admin)
 - `UNIFI_PASSWORD`: Router password
 - `UNIFI_SITE`: UniFi site name (default: default)

@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"unifi-port-forwarder/pkg/config"
 )
@@ -91,12 +92,8 @@ func (ServiceChangePredicate) Delete(e event.DeleteEvent) bool {
 		return false
 	}
 
-	// Only process if service had port forwarding annotation
-	if !hasPortForwardAnnotation(svc) {
-		return false
-	}
-
-	return true
+	// Process deletion if service has finalizer
+	return controllerutil.ContainsFinalizer(svc, config.FinalizerAnnotation)
 }
 
 func (ServiceChangePredicate) Generic(e event.GenericEvent) bool {
