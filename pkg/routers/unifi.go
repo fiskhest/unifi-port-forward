@@ -55,24 +55,40 @@ func CreateUnifiRouter(baseURL, username, password, site, apiKey string) (*Unifi
 	return router, nil
 }
 
-func (router *UnifiRouter) CheckPort(ctx context.Context, port int) (*unifi.PortForward, bool, error) {
+// withAuthRetry executes a function with automatic authentication retry on 401 errors
+func (router *UnifiRouter) withAuthRetry(ctx context.Context, operation string, fn func() error) error {
 	logger := ctrllog.FromContext(ctx)
 
-	portforwards, err := router.Client.ListPortForward(ctx, router.SiteID)
+	err := fn()
 	if err != nil {
 		if serverErr, ok := err.(*unifi.ServerError); ok && serverErr.StatusCode == http.StatusUnauthorized {
-			logger.Info("Authentication failure detected, reauthenticating")
+			logger.Info("Authentication failure detected, reauthenticating", "operation", operation)
 			if loginErr := router.Client.Login(); loginErr == nil {
-				portforwards, err = router.Client.ListPortForward(ctx, router.SiteID)
+				err = fn()
 			}
 		}
 		if err != nil {
-			logger.Error(err, "Failed to list port forwards during CheckPort",
-				"site_id", router.SiteID,
-				"searched_port", port,
-			)
-			return &unifi.PortForward{}, false, err
+			logger.Error(err, "Operation failed after authentication retry", "operation", operation)
 		}
+	}
+	return err
+}
+
+func (router *UnifiRouter) CheckPort(ctx context.Context, port int) (*unifi.PortForward, bool, error) {
+	logger := ctrllog.FromContext(ctx)
+
+	var portforwards []unifi.PortForward
+	err := router.withAuthRetry(ctx, "CheckPort", func() error {
+		var err error
+		portforwards, err = router.Client.ListPortForward(ctx, router.SiteID)
+		return err
+	})
+	if err != nil {
+		logger.Error(err, "Failed to list port forwards during CheckPort",
+			"site_id", router.SiteID,
+			"searched_port", port,
+		)
+		return &unifi.PortForward{}, false, err
 	}
 
 	// Process each rule
@@ -141,21 +157,18 @@ func (router *UnifiRouter) AddPort(ctx context.Context, config PortConfig) error
 		"creation_payload", portforward,
 	)
 
-	result, err := router.Client.CreatePortForward(ctx, router.SiteID, portforward)
+	var result *unifi.PortForward
+	err := router.withAuthRetry(ctx, "AddPort", func() error {
+		var err error
+		result, err = router.Client.CreatePortForward(ctx, router.SiteID, portforward)
+		return err
+	})
 	if err != nil {
-		if serverErr, ok := err.(*unifi.ServerError); ok && serverErr.StatusCode == http.StatusUnauthorized {
-			logger.Info("Authentication failure detected, reauthenticating")
-			if loginErr := router.Client.Login(); loginErr == nil {
-				result, err = router.Client.CreatePortForward(ctx, router.SiteID, portforward)
-			}
-		}
-		if err != nil {
-			logger.Error(err, "Failed to create port forward rule via UniFi API",
-				"config", config,
-				"creation_payload", portforward,
-			)
-			return err
-		}
+		logger.Error(err, "Failed to create port forward rule via UniFi API",
+			"config", config,
+			"creation_payload", portforward,
+		)
+		return err
 	}
 
 	logger.Info("Successfully created port forward rule",
@@ -220,22 +233,19 @@ func (router *UnifiRouter) UpdatePort(ctx context.Context, port int, config Port
 		Src:           "any",
 	}
 
-	result, err := router.Client.UpdatePortForward(ctx, router.SiteID, portforward)
+	var result *unifi.PortForward
+	err = router.withAuthRetry(ctx, "UpdatePort", func() error {
+		var retryErr error
+		result, retryErr = router.Client.UpdatePortForward(ctx, router.SiteID, portforward)
+		return retryErr
+	})
 	if err != nil {
-		if serverErr, ok := err.(*unifi.ServerError); ok && serverErr.StatusCode == http.StatusUnauthorized {
-			logger.Info("Authentication failure detected, reauthenticating")
-			if loginErr := router.Client.Login(); loginErr == nil {
-				result, err = router.Client.UpdatePortForward(ctx, router.SiteID, portforward)
-			}
-		}
-		if err != nil {
-			logger.Error(err, "Failed to update port forward rule via UniFi API",
-				"port", port,
-				"rule_id", pf.ID,
-				"update_payload", portforward,
-			)
-			return fmt.Errorf("failed to update port forward rule for port %d: %w", port, err)
-		}
+		logger.Error(err, "Failed to update port forward rule via UniFi API",
+			"port", port,
+			"rule_id", pf.ID,
+			"update_payload", portforward,
+		)
+		return fmt.Errorf("failed to update port forward rule for port %d: %w", port, err)
 	}
 
 	logger.Info("Successfully updated port forward rule",
@@ -250,25 +260,19 @@ func (router *UnifiRouter) UpdatePort(ctx context.Context, port int, config Port
 }
 
 func (router *UnifiRouter) DeletePortForwardByID(ctx context.Context, ruleID string) error {
-	logger := ctrllog.FromContext(ctx)
-
-	err := router.Client.DeletePortForward(ctx, router.SiteID, ruleID)
-	if err != nil {
-		if serverErr, ok := err.(*unifi.ServerError); ok && serverErr.StatusCode == http.StatusUnauthorized {
-			logger.Info("Authentication failure detected, reauthenticating")
-			if loginErr := router.Client.Login(); loginErr == nil {
-				err = router.Client.DeletePortForward(ctx, router.SiteID, ruleID)
-			}
-		}
-		if err != nil {
-			return err
-		}
-	}
-	return nil
+	err := router.withAuthRetry(ctx, "DeletePortForwardByID", func() error {
+		return router.Client.DeletePortForward(ctx, router.SiteID, ruleID)
+	})
+	return err
 }
 
 func (router *UnifiRouter) ListAllPortForwards(ctx context.Context) ([]*unifi.PortForward, error) {
-	portforwards, err := router.Client.ListPortForward(ctx, router.SiteID)
+	var portforwards []unifi.PortForward
+	err := router.withAuthRetry(ctx, "ListAllPortForwards", func() error {
+		var err error
+		portforwards, err = router.Client.ListPortForward(ctx, router.SiteID)
+		return err
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -282,25 +286,17 @@ func (router *UnifiRouter) ListAllPortForwards(ctx context.Context) ([]*unifi.Po
 }
 
 func (router *UnifiRouter) RemovePort(ctx context.Context, config PortConfig) error {
-	logger := ctrllog.FromContext(ctx)
-
 	pf, portExists, err := router.CheckPort(ctx, config.DstPort)
 	if err != nil {
 		return err
 	}
 
 	if portExists {
-		err := router.Client.DeletePortForward(ctx, router.SiteID, pf.ID)
+		err := router.withAuthRetry(ctx, "RemovePort", func() error {
+			return router.Client.DeletePortForward(ctx, router.SiteID, pf.ID)
+		})
 		if err != nil {
-			if serverErr, ok := err.(*unifi.ServerError); ok && serverErr.StatusCode == http.StatusUnauthorized {
-				logger.Info("Authentication failure detected, reauthenticating")
-				if loginErr := router.Client.Login(); loginErr == nil {
-					err = router.Client.DeletePortForward(ctx, router.SiteID, pf.ID)
-				}
-			}
-			if err != nil {
-				return fmt.Errorf("deleting port-forward rule %s: %v", pf.ID, err)
-			}
+			return fmt.Errorf("deleting port-forward rule %s: %v", pf.ID, err)
 		}
 	}
 	return nil
