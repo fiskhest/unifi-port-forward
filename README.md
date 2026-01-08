@@ -75,12 +75,16 @@ I am reluctant on increasing the feature complexity/scope of this project.
 PRs might get reviewed.
 Forking is welcome.
 
-
 1. Fork the repository
 2. Create a feature branch
 3. Add tests for new functionality
 4. Ensure all tests pass
 5. Submit a pull request
+
+Potential use cases that might be added in the future:
+- CRDs to define external to cluster port forward rules with IaC
+- add a configurable "policy" = sync / upsert-only / create-only?
+- Support for Service NodePort Objects / no load balancer implemented
 
 ## License
 
