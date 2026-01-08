@@ -345,9 +345,5 @@ func (r *PeriodicReconciler) shouldManageService(service *corev1.Service) bool {
 
 	// Only manage services with LoadBalancer IP
 	lbIP := helpers.GetLBIP(service)
-	if lbIP == "" {
-		return false
-	}
-
-	return true
+	return lbIP != ""
 }

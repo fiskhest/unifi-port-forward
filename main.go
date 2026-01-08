@@ -65,9 +65,6 @@ var rootCmd = &cobra.Command{
 		if cmd.Flags().Changed("debug") {
 			cfg.Debug, _ = cmd.Flags().GetBool("debug")
 		}
-		if cmd.Flags().Changed("log-level") {
-			cfg.LogLevel, _ = cmd.Flags().GetString("log-level")
-		}
 
 		// Validate final configuration
 		return cfg.Validate()
@@ -82,7 +79,6 @@ func init() {
 	rootCmd.PersistentFlags().StringVarP(&cfg.Site, "site", "s", "default", "UniFi site name (env: UNIFI_SITE, default: default)")
 	rootCmd.PersistentFlags().StringVarP(&cfg.APIKey, "api-key", "k", "", "UniFi API key (env: UNIFI_API_KEY, alternative to username/password)")
 	rootCmd.PersistentFlags().BoolVarP(&cfg.Debug, "debug", "d", false, "Enable debug logging (env: DEBUG)")
-	rootCmd.PersistentFlags().StringVar(&cfg.LogLevel, "log-level", "info", "Log level: trace, debug, info, warn, error (env: LOG_LEVEL, default: info)")
 
 	// Add subcommands
 	rootCmd.AddCommand(controllerCmd)
@@ -179,7 +175,6 @@ func runController(cmd *cobra.Command, args []string) error {
 		}
 	}()
 
-	// Ensure graceful shutdown
 	setupGracefulShutdown()
 
 	// Override shutdown function to also stop periodic reconciler
@@ -191,25 +186,9 @@ func runController(cmd *cobra.Command, args []string) error {
 
 		// Stop periodic reconciler
 		if reconciler.PeriodicReconciler != nil {
-			reconciler.PeriodicReconciler.Stop()
-		}
-
-		os.Exit(0)
-	}()
-
-	// Ensure graceful shutdown
-	setupGracefulShutdown()
-
-	// Override shutdown function to also stop periodic reconciler
-	go func() {
-		sigCh := make(chan os.Signal, 1)
-		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-		<-sigCh
-		fmt.Println("Shutting down gracefully")
-
-		// Stop periodic reconciler
-		if reconciler.PeriodicReconciler != nil {
-			reconciler.PeriodicReconciler.Stop()
+			if err := reconciler.PeriodicReconciler.Stop(); err != nil {
+				logger.Error(err, "Failed to stop periodic reconciler")
+			}
 		}
 
 		os.Exit(0)
