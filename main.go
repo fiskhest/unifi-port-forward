@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -179,8 +180,59 @@ func runController(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to setup controller: %w", err)
 	}
 
-	// Setup graceful shutdown
+	// Create and start periodic reconciler (always on)
+	reconciler.PeriodicReconciler = controller.NewPeriodicReconciler(
+		mgr.GetClient(),
+		mgr.GetScheme(),
+		router,
+		&cfg,
+		reconciler.EventPublisher,
+		reconciler.Recorder,
+	)
+
+	// Start periodic reconciler in background
+	go func() {
+		logger := logr.FromSlogHandler(slog.Default().Handler()).WithValues("component", "periodic-reconciler-main")
+		if err := reconciler.PeriodicReconciler.Start(context.Background()); err != nil {
+			logger.Error(err, "Periodic reconciler failed")
+		}
+	}()
+
+	// Ensure graceful shutdown
 	setupGracefulShutdown()
+
+	// Override shutdown function to also stop periodic reconciler
+	go func() {
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+		<-sigCh
+		fmt.Println("Shutting down gracefully")
+
+		// Stop periodic reconciler
+		if reconciler.PeriodicReconciler != nil {
+			reconciler.PeriodicReconciler.Stop()
+		}
+
+		os.Exit(0)
+	}()
+
+	// Ensure graceful shutdown
+	setupGracefulShutdown()
+
+	// Override shutdown function to also stop periodic reconciler
+	go func() {
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+		<-sigCh
+		fmt.Println("Shutting down gracefully")
+
+		// Stop periodic reconciler
+		if reconciler.PeriodicReconciler != nil {
+			reconciler.PeriodicReconciler.Stop()
+		}
+
+		os.Exit(0)
+	}()
 
 	fmt.Println("Starting port forwarding controller")
 	return mgr.Start(ctrl.SetupSignalHandler())

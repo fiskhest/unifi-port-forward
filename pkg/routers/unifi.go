@@ -100,7 +100,7 @@ func (router *UnifiRouter) CheckPort(ctx context.Context, port int) (*unifi.Port
 		}
 
 		if portNum == port {
-			logger.Info("Found matching port forward rule",
+			logger.V(1).Info("Found matching port forward rule",
 				"port", port,
 				"rule_id", portforward.ID,
 				"rule_name", portforward.Name,
@@ -121,7 +121,7 @@ func (router *UnifiRouter) CheckPort(ctx context.Context, port int) (*unifi.Port
 func (router *UnifiRouter) AddPort(ctx context.Context, config PortConfig) error {
 	logger := ctrllog.FromContext(ctx)
 
-	logger.Info("Creating new port forward rule",
+	logger.V(1).Info("Creating new port forward rule",
 		"operation", "add_port",
 		"config_name", config.Name,
 		"dst_port", config.DstPort,
@@ -171,7 +171,7 @@ func (router *UnifiRouter) AddPort(ctx context.Context, config PortConfig) error
 		return err
 	}
 
-	logger.Info("Successfully created port forward rule",
+	logger.V(1).Info("Successfully created port forward rule",
 		"dst_port", config.DstPort,
 		"rule_name", config.Name,
 		"result", result,

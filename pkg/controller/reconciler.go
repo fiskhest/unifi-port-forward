@@ -29,6 +29,9 @@ type PortForwardReconciler struct {
 	Config         *config.Config
 	EventPublisher *EventPublisher
 	Recorder       record.EventRecorder
+
+	// Always-on periodic reconciler
+	PeriodicReconciler *PeriodicReconciler
 }
 
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch

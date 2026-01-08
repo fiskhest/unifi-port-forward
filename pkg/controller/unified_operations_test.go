@@ -3,6 +3,7 @@ package controller
 import (
 	"testing"
 
+	"unifi-port-forwarder/pkg/config"
 	"unifi-port-forwarder/pkg/routers"
 
 	"github.com/filipowm/go-unifi/unifi"
@@ -12,7 +13,7 @@ import (
 
 func TestCalculateDelta_CreationScenario(t *testing.T) {
 	// Test delta calculation for new port creation
-	controller := &PortForwardReconciler{}
+	controller := &PortForwardReconciler{Config: &config.Config{Debug: false}}
 
 	desiredConfigs := []routers.PortConfig{
 		{
@@ -57,7 +58,7 @@ func TestCalculateDelta_CreationScenario(t *testing.T) {
 
 func TestCalculateDelta_UpdateScenario(t *testing.T) {
 	// Test delta calculation for existing rule update
-	controller := &PortForwardReconciler{}
+	controller := &PortForwardReconciler{Config: &config.Config{Debug: false}}
 
 	existingRules := []*unifi.PortForward{
 		{
@@ -115,7 +116,7 @@ func TestCalculateDelta_UpdateScenario(t *testing.T) {
 
 func TestCalculateDelta_DeletionScenario(t *testing.T) {
 	// Test delta calculation for port deletion
-	controller := &PortForwardReconciler{}
+	controller := &PortForwardReconciler{Config: &config.Config{Debug: false}}
 
 	existingRules := []*unifi.PortForward{
 		{
@@ -161,7 +162,7 @@ func TestCalculateDelta_DeletionScenario(t *testing.T) {
 }
 
 func TestDetectPortConflicts(t *testing.T) {
-	controller := &PortForwardReconciler{}
+	controller := &PortForwardReconciler{Config: &config.Config{Debug: false}}
 
 	// Create desired configs that should conflict with existing manual rules
 	desiredConfigs := []routers.PortConfig{
@@ -209,8 +210,8 @@ func TestDetectPortConflicts(t *testing.T) {
 		t.Errorf("Expected UPDATE operation for conflict, got %s", operations[0].Type)
 	}
 
-	if operations[0].Reason != "port_conflict_take_ownership" {
-		t.Errorf("Expected 'port_conflict_take_ownership' reason, got %s", operations[0].Reason)
+	if operations[0].Reason != "ownership_takeover" {
+		t.Errorf("Expected 'ownership_takeover' reason, got %s", operations[0].Reason)
 	}
 
 	// Verify the old rule details
@@ -229,7 +230,7 @@ func TestDetectPortConflicts(t *testing.T) {
 }
 
 func TestDetectPortConflicts_NoConflicts(t *testing.T) {
-	controller := &PortForwardReconciler{}
+	controller := &PortForwardReconciler{Config: &config.Config{Debug: false}}
 
 	desiredConfigs := []routers.PortConfig{
 		{
@@ -263,7 +264,7 @@ func TestDetectPortConflicts_NoConflicts(t *testing.T) {
 }
 
 func TestDetectPortConflicts_AlreadyOwned(t *testing.T) {
-	controller := &PortForwardReconciler{}
+	controller := &PortForwardReconciler{Config: &config.Config{Debug: false}}
 
 	desiredConfigs := []routers.PortConfig{
 		{
@@ -309,10 +310,10 @@ func TestDetectPortConflicts_AlreadyOwned(t *testing.T) {
 
 func TestCountOwnershipTakeovers(t *testing.T) {
 	operations := []PortOperation{
-		{Type: OpCreate, Reason: "port_not_yet_exists"},
-		{Type: OpUpdate, Reason: "port_conflict_take_ownership"},
+		{Type: OpCreate, Reason: "port_configuration_changed"},
+		{Type: OpUpdate, Reason: "ownership_takeover"},
 		{Type: OpUpdate, Reason: "configuration_mismatch"},
-		{Type: OpUpdate, Reason: "port_conflict_take_ownership"},
+		{Type: OpUpdate, Reason: "ownership_takeover"},
 		{Type: OpDelete, Reason: "port_no_longer_desired"},
 	}
 
@@ -324,7 +325,7 @@ func TestCountOwnershipTakeovers(t *testing.T) {
 }
 
 func TestDetectPortConflicts_TrueConflict(t *testing.T) {
-	controller := &PortForwardReconciler{}
+	controller := &PortForwardReconciler{Config: &config.Config{Debug: false}}
 
 	desiredConfigs := []routers.PortConfig{
 		{
@@ -371,8 +372,8 @@ func TestDetectPortConflicts_TrueConflict(t *testing.T) {
 		t.Errorf("Expected UPDATE operation for conflict, got %s", operations[0].Type)
 	}
 
-	if operations[0].Reason != "port_conflict_take_ownership" {
-		t.Errorf("Expected 'port_conflict_take_ownership' reason, got %s", operations[0].Reason)
+	if operations[0].Reason != "ownership_takeover" {
+		t.Errorf("Expected 'ownership_takeover' reason, got %s", operations[0].Reason)
 	}
 
 	// Verify the old rule details
@@ -391,7 +392,7 @@ func TestDetectPortConflicts_TrueConflict(t *testing.T) {
 }
 
 func TestDetectPortConflicts_ExternalPortOnly(t *testing.T) {
-	controller := &PortForwardReconciler{}
+	controller := &PortForwardReconciler{Config: &config.Config{Debug: false}}
 
 	desiredConfigs := []routers.PortConfig{
 		{
@@ -436,7 +437,7 @@ func TestDetectPortConflicts_ExternalPortOnly(t *testing.T) {
 }
 
 func TestDetectPortConflicts_InternalPortOnly(t *testing.T) {
-	controller := &PortForwardReconciler{}
+	controller := &PortForwardReconciler{Config: &config.Config{Debug: false}}
 
 	desiredConfigs := []routers.PortConfig{
 		{
@@ -481,7 +482,7 @@ func TestDetectPortConflicts_InternalPortOnly(t *testing.T) {
 }
 
 func TestDetectPortConflicts_ProtocolMismatch(t *testing.T) {
-	controller := &PortForwardReconciler{}
+	controller := &PortForwardReconciler{Config: &config.Config{Debug: false}}
 
 	desiredConfigs := []routers.PortConfig{
 		{
@@ -526,7 +527,7 @@ func TestDetectPortConflicts_ProtocolMismatch(t *testing.T) {
 }
 
 func TestDetectPortConflicts_MultipleConflicts(t *testing.T) {
-	controller := &PortForwardReconciler{}
+	controller := &PortForwardReconciler{Config: &config.Config{Debug: false}}
 
 	desiredConfigs := []routers.PortConfig{
 		{

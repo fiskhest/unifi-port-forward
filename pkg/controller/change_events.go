@@ -13,11 +13,14 @@ import (
 )
 
 const (
-	EventPortForwardCreated        = "PortForwardCreated"
-	EventPortForwardUpdated        = "PortForwardUpdated"
-	EventPortForwardDeleted        = "PortForwardDeleted"
-	EventPortForwardFailed         = "PortForwardFailed"
-	EventPortForwardTakenOwnership = "PortForwardTakenOwnership"
+	EventPortForwardCreated                     = "PortForwardCreated"
+	EventPortForwardUpdated                     = "PortForwardUpdated"
+	EventPortForwardDeleted                     = "PortForwardDeleted"
+	EventPortForwardFailed                      = "PortForwardFailed"
+	EventPortForwardTakenOwnership              = "PortForwardTakenOwnership"
+	EventDriftDetected                          = "DriftDetected"
+	EventDriftCorrected                         = "DriftCorrected"
+	EventServicePeriodicReconciliationCompleted = "ServicePeriodicReconciliationCompleted"
 )
 
 type PortForwardEventData struct {
@@ -241,5 +244,94 @@ func (ep *EventPublisher) PublishPortForwardTakenOwnershipEvent(ctx context.Cont
 	} else {
 		logger.Info("Published PortForwardTakenOwnership event",
 			"old_rule", oldRuleName, "new_rule", newRuleName, "external_port", externalPort)
+	}
+}
+
+// PublishDriftDetectedEvent publishes an event when drift is detected for a service
+func (ep *EventPublisher) PublishDriftDetectedEvent(ctx context.Context, service *corev1.Service, changeContext *ChangeContext, analysis *DriftAnalysis) {
+	logger := ctrllog.FromContext(ctx).WithValues("service", service.Name, "namespace", service.Namespace)
+
+	eventData := &PortForwardEventData{
+		ServiceKey:       fmt.Sprintf("%s/%s", service.Namespace, service.Name),
+		ServiceNamespace: service.Namespace,
+		ServiceName:      service.Name,
+		Reason:           "DriftDetected",
+		Message: fmt.Sprintf("Drift detected - missing: %d, wrong: %d, extra: %d",
+			len(analysis.MissingRules), len(analysis.WrongRules), len(analysis.ExtraRules)),
+	}
+
+	message := fmt.Sprintf("Drift detected for service %s/%s - corrective actions will be taken", service.Namespace, service.Name)
+
+	if err := ep.createEvent(ctx, service, EventDriftDetected, message, eventData, changeContext); err != nil {
+		logger.Error(err, "Failed to publish DriftDetected event")
+	}
+}
+
+// PublishDriftCorrectedEvent publishes an event when drift is successfully corrected for a service
+func (ep *EventPublisher) PublishDriftCorrectedEvent(ctx context.Context, service *corev1.Service, changeContext *ChangeContext, analysis *DriftAnalysis) {
+	logger := ctrllog.FromContext(ctx).WithValues("service", service.Name, "namespace", service.Namespace)
+
+	eventData := &PortForwardEventData{
+		ServiceKey:       fmt.Sprintf("%s/%s", service.Namespace, service.Name),
+		ServiceNamespace: service.Namespace,
+		ServiceName:      service.Name,
+		Reason:           "DriftCorrected",
+		Message: fmt.Sprintf("Drift corrected - missing: %d, wrong: %d, extra: %d",
+			len(analysis.MissingRules), len(analysis.WrongRules), len(analysis.ExtraRules)),
+	}
+
+	message := fmt.Sprintf("Drift corrected for service %s/%s", service.Namespace, service.Name)
+
+	if err := ep.createEvent(ctx, service, EventDriftCorrected, message, eventData, changeContext); err != nil {
+		logger.Error(err, "Failed to publish DriftCorrected event")
+	}
+}
+
+// PublishDriftCorrectionFailedEvent publishes an event when drift correction fails for a service
+func (ep *EventPublisher) PublishDriftCorrectionFailedEvent(ctx context.Context, service *corev1.Service, changeContext *ChangeContext, analysis *DriftAnalysis, err error) {
+	logger := ctrllog.FromContext(ctx).WithValues("service", service.Name, "namespace", service.Namespace)
+
+	eventData := &PortForwardEventData{
+		ServiceKey:       fmt.Sprintf("%s/%s", service.Namespace, service.Name),
+		ServiceNamespace: service.Namespace,
+		ServiceName:      service.Name,
+		Reason:           "DriftCorrectionFailed",
+		Message:          "Failed to correct drift",
+		Error:            err.Error(),
+	}
+
+	message := fmt.Sprintf("Failed to correct drift for service %s/%s - %s", service.Namespace, service.Name, err.Error())
+
+	if createErr := ep.createEvent(ctx, service, EventPortForwardFailed, message, eventData, changeContext); createErr != nil {
+		logger.Error(createErr, "Failed to publish DriftCorrectionFailed event")
+	} else {
+		logger.Info("Published DriftCorrectionFailed event", "service", service.Name, "error", err.Error())
+	}
+}
+
+// PublishServicePeriodicReconciliationCompletedEvent publishes an event when periodic reconciliation completes
+// for a specific service that had drift. This is only called when drift was detected and handled.
+func (ep *EventPublisher) PublishServicePeriodicReconciliationCompletedEvent(ctx context.Context, service *corev1.Service, hasDrift bool, correctedRules int, failedOperations int) {
+	logger := ctrllog.FromContext(ctx).WithValues("service", service.Name, "namespace", service.Namespace)
+
+	eventData := &PortForwardEventData{
+		ServiceKey:       fmt.Sprintf("%s/%s", service.Namespace, service.Name),
+		ServiceNamespace: service.Namespace,
+		ServiceName:      service.Name,
+		Reason:           "ServicePeriodicReconciliationCompleted",
+		Message: fmt.Sprintf("Reconciliation completed - drift: %t, corrected: %d, failed: %d",
+			hasDrift, correctedRules, failedOperations),
+	}
+
+	message := fmt.Sprintf("Periodic reconciliation completed for service %s/%s - drift detected: %t, rules corrected: %d, failed: %d",
+		service.Namespace, service.Name, hasDrift, correctedRules, failedOperations)
+
+	if err := ep.createEvent(ctx, service, EventServicePeriodicReconciliationCompleted, message, eventData, nil); err != nil {
+		logger.Error(err, "Failed to publish ServicePeriodicReconciliationCompleted event")
+	} else {
+		logger.V(1).Info("Published ServicePeriodicReconciliationCompleted event",
+			"has_drift", hasDrift,
+			"corrected_rules", correctedRules,
+			"failed_operations", failedOperations)
 	}
 }

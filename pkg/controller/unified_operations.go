@@ -63,17 +63,22 @@ type OperationResult struct {
 func (op PortOperation) String() string {
 	switch op.Type {
 	case OpCreate:
-		return fmt.Sprintf("CREATE port %d → %s:%d (%s)", op.Config.DstPort, op.Config.DstIP, op.Config.FwdPort, op.Config.Protocol)
+		return fmt.Sprintf("CREATE rule port %d → %s:%d (%s)", op.Config.DstPort, op.Config.DstIP, op.Config.FwdPort, op.Config.Protocol)
 	case OpUpdate:
-		return fmt.Sprintf("UPDATE port %d → %s:%d (%s)", op.Config.DstPort, op.Config.DstIP, op.Config.FwdPort, op.Config.Protocol)
+		return fmt.Sprintf("UPDATE rule port %d → %s:%d (%s)", op.Config.DstPort, op.Config.DstIP, op.Config.FwdPort, op.Config.Protocol)
 	case OpDelete:
-		return fmt.Sprintf("DELETE port %d (%s)", op.Config.DstPort, op.Config.Protocol)
+		return fmt.Sprintf("DELETE rule port %d (%s)", op.Config.DstPort, op.Config.Protocol)
 	default:
 		return fmt.Sprintf("UNKNOWN operation: %s", op.Type)
 	}
 }
 
 // calculateDelta determines what operations are needed to reach desired state
+//
+// IMPORTANT: UniFi API UpdatePort limitations:
+// - Can update: rule name, destination IP, enabled status
+// - CANNOT update: external port (DstPort), internal port (FwdPort), protocol
+// - Port changes require CREATE + DELETE operations
 func (r *PortForwardReconciler) calculateDelta(currentRules []*unifi.PortForward, desiredConfigs []routers.PortConfig, changeContext *ChangeContext, service *corev1.Service) []PortOperation {
 	var operations []PortOperation
 	servicePrefix := fmt.Sprintf("%s/%s:", service.Namespace, service.Name)
@@ -99,6 +104,9 @@ func (r *PortForwardReconciler) calculateDelta(currentRules []*unifi.PortForward
 		desiredMap[portKey] = config
 	}
 
+	// Build map of current rules using same key format
+	// If port keys don't match, it means port numbers changed = CREATE + DELETE
+	// If port keys match but properties differ, it's UPDATE
 	currentMap := make(map[string]*unifi.PortForward) // portKey -> existing rule
 	for _, rule := range currentRules {
 		if strings.HasPrefix(rule.Name, servicePrefix) {
@@ -142,6 +150,8 @@ func (r *PortForwardReconciler) calculateDelta(currentRules []*unifi.PortForward
 		}
 
 		if existingRule, exists := currentMap[portKey]; !exists {
+			// Port configuration (dstPort/fwdPort/protocol) doesn't match any existing rule
+			// This requires CREATE operation because UniFi UpdatePort API cannot change port numbers
 			operations = append(operations, PortOperation{
 				Type:   OpCreate,
 				Config: desiredConfig,
@@ -173,9 +183,12 @@ func (r *PortForwardReconciler) executeOperations(ctx context.Context, operation
 	result := &OperationResult{}
 	var completedOperations []PortOperation
 
-	ctrllog.FromContext(ctx).Info("Executing port operations",
-		"total_operations", len(operations),
-		"ownership_takeovers", countOwnershipTakeovers(operations))
+	if r.Config.Debug {
+		ctrllog.FromContext(ctx).Info("Executing port operations",
+			"total_operations", len(operations),
+			"ownership_takeovers", countOwnershipTakeovers(operations))
+
+	}
 
 	for _, op := range operations {
 		var err error
@@ -336,7 +349,7 @@ func (r *PortForwardReconciler) detectPortConflicts(currentRules []*unifi.PortFo
 				Type:         OpUpdate, // Update to take ownership
 				Config:       desiredConfig,
 				ExistingRule: rule,
-				Reason:       "port_conflict_take_ownership",
+				Reason:       "ownership_takeover",
 			})
 		}
 	}
@@ -367,7 +380,7 @@ func (r *PortForwardReconciler) detectPortConflicts(currentRules []*unifi.PortFo
 func countOwnershipTakeovers(operations []PortOperation) int {
 	count := 0
 	for _, op := range operations {
-		if op.Reason == "port_conflict_take_ownership" {
+		if op.Reason == "ownership_takeover" {
 			count++
 		}
 	}

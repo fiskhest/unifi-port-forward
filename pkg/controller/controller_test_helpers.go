@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"unifi-port-forwarder/pkg/config"
 	"unifi-port-forwarder/pkg/helpers"
 	"unifi-port-forwarder/testutils"
 
@@ -56,6 +57,7 @@ func NewControllerTestEnv(t *testing.T) *ControllerTestEnv {
 		Client: fakeClient,
 		Router: mockRouter,
 		Scheme: scheme,
+		Config: &config.Config{Debug: false},
 	}
 
 	return &ControllerTestEnv{
