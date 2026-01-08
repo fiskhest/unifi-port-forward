@@ -12,13 +12,11 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
-	"time"
 
 	"github.com/go-logr/logr"
 	"github.com/spf13/cobra"
 	"sigs.k8s.io/yaml"
 	"unifi-port-forwarder/cmd/cleaner"
-	"unifi-port-forwarder/cmd/service-debugger"
 	"unifi-port-forwarder/pkg/config"
 	"unifi-port-forwarder/pkg/controller"
 	"unifi-port-forwarder/pkg/routers"
@@ -88,7 +86,6 @@ func init() {
 
 	// Add subcommands
 	rootCmd.AddCommand(controllerCmd)
-	rootCmd.AddCommand(serviceDebuggerCmd)
 	rootCmd.AddCommand(cleanCmd)
 
 	// Set default command to controller when no command is specified
@@ -111,25 +108,9 @@ var controllerCmd = &cobra.Command{
 }
 
 func init() {
-	// Add service-debugger specific flags
-	serviceDebuggerCmd.Flags().StringP("namespace", "n", "", "Filter by namespace (empty = all)")
-	serviceDebuggerCmd.Flags().StringP("labels", "l", "", "Filter by labels (e.g., app=web)")
-	serviceDebuggerCmd.Flags().StringP("log-level", "", "info", "Log level: debug, info, warn, error")
-	serviceDebuggerCmd.Flags().StringP("output", "o", "text", "Output format: text, json")
-	serviceDebuggerCmd.Flags().IntP("history", "H", 10, "Number of changes to track per service")
-	serviceDebuggerCmd.Flags().DurationP("interval", "i", 5*time.Second, "Polling interval for status checks")
-
 	// Add clean-specific flags
 	cleanCmd.Flags().StringP("port-mappings", "m", "", "Port mappings to clean (format: 'external-port:dest-ip', comma-separated) [REQUIRED]")
 	cleanCmd.Flags().StringP("port-mappings-file", "f", "", "Path to port mappings configuration file (YAML/JSON)")
-}
-
-// serviceDebuggerCmd runs the service IP debugger
-var serviceDebuggerCmd = &cobra.Command{
-	Use:   "service-debugger",
-	Short: "Run the service IP debugger",
-	Long:  `Monitor Kubernetes services for IP changes and debug LoadBalancer IP issues in LoadBalancer services`,
-	RunE:  runServiceDebugger,
 }
 
 // cleanCmd runs the port forwarding rule cleaner
@@ -270,38 +251,6 @@ func runClean(cmd *cobra.Command, args []string) error {
 	}
 
 	return cleaner.Run(cleanConfig, portMaps)
-}
-
-func runServiceDebugger(cmd *cobra.Command, args []string) error {
-	// Get service-debugger specific flags
-	namespace, _ := cmd.Flags().GetString("namespace")
-	labels, _ := cmd.Flags().GetString("labels")
-	logLevel, _ := cmd.Flags().GetString("log-level")
-	output, _ := cmd.Flags().GetString("output")
-	history, _ := cmd.Flags().GetInt("history")
-	interval, _ := cmd.Flags().GetDuration("interval")
-
-	// Set defaults
-	if output == "" {
-		output = "text"
-	}
-	if history == 0 {
-		history = 10
-	}
-	if interval == 0 {
-		interval = 5 * time.Second
-	}
-
-	config := servicedebugger.ServiceDebuggerConfig{
-		Namespace:     namespace,
-		LabelSelector: labels,
-		LogLevel:      logLevel,
-		OutputFormat:  output,
-		HistorySize:   history,
-		PollInterval:  interval,
-	}
-
-	return servicedebugger.Run(config)
 }
 
 // parsePortMappingsString parses CLI string format: "83:192.168.27.130,8080:192.168.27.131"
