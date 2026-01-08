@@ -93,7 +93,7 @@ func (ServiceChangePredicate) Delete(e event.DeleteEvent) bool {
 	}
 
 	// Process deletion if service has finalizer
-	return controllerutil.ContainsFinalizer(svc, config.FinalizerAnnotation)
+	return controllerutil.ContainsFinalizer(svc, config.FinalizerLabel)
 }
 
 func (ServiceChangePredicate) Generic(e event.GenericEvent) bool {

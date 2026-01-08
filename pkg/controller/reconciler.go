@@ -53,7 +53,7 @@ func (r *PortForwardReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 
 	// Handle deletion with finalizer blocking
 	if !service.DeletionTimestamp.IsZero() {
-		if controllerutil.ContainsFinalizer(service, config.FinalizerAnnotation) {
+		if controllerutil.ContainsFinalizer(service, config.FinalizerLabel) {
 			logger.Info("Service marked for deletion, performing finalizer cleanup")
 			return r.handleFinalizerCleanup(ctx, service)
 		}
@@ -71,9 +71,9 @@ func (r *PortForwardReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 
 	// Check if service needs port forwarding and add finalizer if needed
 	shouldManage := r.shouldProcessService(ctx, service, lbIP)
-	if shouldManage && !controllerutil.ContainsFinalizer(service, config.FinalizerAnnotation) {
+	if shouldManage && !controllerutil.ContainsFinalizer(service, config.FinalizerLabel) {
 		logger.Info("Adding finalizer to managed service")
-		controllerutil.AddFinalizer(service, config.FinalizerAnnotation)
+		controllerutil.AddFinalizer(service, config.FinalizerLabel)
 		if err := r.Update(ctx, service); err != nil {
 			logger.Error(err, "Failed to add finalizer")
 			return ctrl.Result{}, err
@@ -81,9 +81,9 @@ func (r *PortForwardReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	}
 
 	// If service doesn't need management but has finalizer, remove it
-	if !shouldManage && controllerutil.ContainsFinalizer(service, config.FinalizerAnnotation) {
+	if !shouldManage && controllerutil.ContainsFinalizer(service, config.FinalizerLabel) {
 		logger.Info("Removing finalizer from non-managed service")
-		controllerutil.RemoveFinalizer(service, config.FinalizerAnnotation)
+		controllerutil.RemoveFinalizer(service, config.FinalizerLabel)
 		if err := r.Update(ctx, service); err != nil {
 			logger.Error(err, "Failed to remove finalizer")
 			return ctrl.Result{}, err
@@ -383,7 +383,7 @@ func (r *PortForwardReconciler) handleFinalizerCleanup(ctx context.Context, serv
 		r.createEvent(ctx, service, "CleanupFailed", fmt.Sprintf("Failed cleanup service: %s - exceeded maximum attempts, manual intervention required", service.Name))
 
 		// Remove finalizer to allow deletion (with manual intervention marker)
-		controllerutil.RemoveFinalizer(service, config.FinalizerAnnotation)
+		controllerutil.RemoveFinalizer(service, config.FinalizerLabel)
 		annotations[config.CleanupStatusAnnotation] = "failed_max_retries"
 		service.SetAnnotations(annotations)
 		if err := r.Update(ctx, service); err != nil {
@@ -438,7 +438,7 @@ func (r *PortForwardReconciler) handleFinalizerCleanup(ctx context.Context, serv
 
 	// Cleanup successful - remove finalizer
 	logger.Info("Cleanup successful, removing finalizer")
-	controllerutil.RemoveFinalizer(service, config.FinalizerAnnotation)
+	controllerutil.RemoveFinalizer(service, config.FinalizerLabel)
 
 	// Clear cleanup annotations
 	annotations[config.CleanupStatusAnnotation] = "completed"

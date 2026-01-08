@@ -59,7 +59,7 @@ func TestServiceChangePredicate_Delete(t *testing.T) {
 
 			// Add finalizer if specified
 			if tt.hasFinalizer {
-				service.Finalizers = append(service.Finalizers, config.FinalizerAnnotation)
+				service.Finalizers = append(service.Finalizers, config.FinalizerLabel)
 			}
 
 			// Add annotation if specified

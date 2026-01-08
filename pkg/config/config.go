@@ -9,15 +9,14 @@ import (
 	"time"
 )
 
-// FilterAnnotation is the annotation key for enabling port forwarding
+// Annotations and Labels that we are owners of
 const (
 	FilterAnnotation          = "unifi-port-forwarder/ports"
-	FinalizerAnnotation       = "unifi-port-forwarder/port-forward-cleanup"
+	FinalizerLabel            = "unifi-port-forwarder/port-forward-cleanup"
 	CleanupStatusAnnotation   = "unifi-port-forwarder/cleanup-status"
 	CleanupAttemptsAnnotation = "unifi-port-forwarder/cleanup-attempts"
 )
 
-// Config holds the application configuration
 type Config struct {
 	// UniFi Connection Settings
 	RouterIP string `env:"UNIFI_ROUTER_IP" default:"192.168.27.1" json:"routerIp"`
@@ -27,13 +26,11 @@ type Config struct {
 	APIKey   string `env:"UNIFI_API_KEY" json:"apiKey"`
 
 	// Application Settings
-	Debug    bool   `env:"DEBUG" default:"false" json:"debug"`
-	LogLevel string `env:"LOG_LEVEL" default:"info" json:"logLevel"`
+	Debug bool `env:"DEBUG" default:"false" json:"debug"`
 
-	// Cleanup and finalizer settings
+	// Finalizer settings
 	FinalizerMaxRetries    int           `env:"FINALIZER_MAX_RETRIES" default:"3" json:"finalizerMaxRetries"`
 	FinalizerRetryInterval time.Duration `env:"FINALIZER_RETRY_INTERVAL" default:"30s" json:"finalizerRetryInterval"`
-	CleanupTimeout         time.Duration `env:"CLEANUP_TIMEOUT" default:"5m" json:"cleanupTimeout"`
 
 	// Runtime values (derived from settings)
 	Host string `json:"-"`
@@ -117,11 +114,8 @@ func InitFromEnv(cfg *Config) {
 	if envAPIKey := os.Getenv("UNIFI_API_KEY"); envAPIKey != "" {
 		cfg.APIKey = envAPIKey
 	}
-	if !cfg.Debug {
-		cfg.Debug = os.Getenv("DEBUG") != ""
-	}
-	if envLogLevel := os.Getenv("LOG_LEVEL"); envLogLevel != "" {
-		cfg.LogLevel = envLogLevel
+	if envDebug := os.Getenv("DEBUG"); envDebug != "" {
+		cfg.Debug = envDebug != ""
 	}
 }
 
@@ -135,9 +129,6 @@ func (c *Config) SetDefaults() {
 	}
 	if c.Site == "" {
 		c.Site = "default"
-	}
-	if c.LogLevel == "" {
-		c.LogLevel = "info"
 	}
 }
 

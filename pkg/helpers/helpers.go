@@ -259,7 +259,7 @@ func GetPortConfigs(service *v1.Service, lbIP string, annotationKey string) ([]r
 		})
 	}
 
-	// Check if we generated any port configurations - provide helpful error if empty
+	// Check if we generated any port configurations
 	if len(configs) == 0 {
 		// Build helpful error message with available ports and format examples
 		var availablePorts []string
