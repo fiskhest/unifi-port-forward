@@ -2,7 +2,6 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: unifi-port-forwarder
-  namespace: unifi-port-forwarder
 spec:
   replicas: 1
   selector:
