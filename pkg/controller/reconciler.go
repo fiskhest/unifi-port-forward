@@ -96,14 +96,38 @@ func (r *PortForwardReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		return ctrl.Result{}, nil
 	}
 
-	// Extract change context to understand what triggered this reconciliation
-	changeContext, err := extractChangeContext(service)
+	// Get current router state to detect changes
+	currentRules, err := r.Router.ListAllPortForwards(ctx)
 	if err != nil {
-		logger.Error(err, "Failed to extract change context, proceeding without it")
-		changeContext = &ChangeContext{
-			ServiceKey:       fmt.Sprintf("%s/%s", service.Namespace, service.Name),
-			ServiceNamespace: service.Namespace,
-			ServiceName:      service.Name,
+		logger.Error(err, "Failed to list current port forwards for change detection")
+		// Continue without change detection for now
+	}
+
+	// Create change context for this reconciliation
+	changeContext := &ChangeContext{
+		ServiceKey:       fmt.Sprintf("%s/%s", service.Namespace, service.Name),
+		ServiceNamespace: service.Namespace,
+		ServiceName:      service.Name,
+	}
+
+	// Detect changes by comparing with current rules
+	if currentRules != nil {
+		servicePrefix := fmt.Sprintf("%s/%s:", service.Namespace, service.Name)
+		serviceIP := helpers.GetLBIP(service)
+
+		for _, rule := range currentRules {
+			if strings.HasPrefix(rule.Name, servicePrefix) {
+				// Service has existing rules, this might be an update
+				// Check if IP changed
+				if rule.DestinationIP != serviceIP {
+					changeContext.IPChanged = true
+					changeContext.OldIP = rule.DestinationIP
+					changeContext.NewIP = serviceIP
+				}
+				// Assume spec change if service has existing rules
+				changeContext.SpecChanged = true
+				break
+			}
 		}
 	}
 
@@ -238,19 +262,6 @@ func (r *PortForwardReconciler) processAllChanges(ctx context.Context, service *
 	if err != nil {
 		logger.Error(err, "Failed to calculate desired state")
 
-		// Update error context for validation failures
-		errorContext := &ErrorContext{
-			Timestamp:        getCurrentTime(),
-			LastFailureTime:  getCurrentTime(),
-			OverallStatus:    "complete_failure",
-			LastErrorCode:    "VALIDATION_ERROR",
-			LastErrorMessage: err.Error(),
-		}
-
-		if updateErr := updateErrorContextAnnotation(ctx, r.Client, service, errorContext); updateErr != nil {
-			logger.Error(updateErr, "Failed to update error context for validation failure")
-		}
-
 		return nil, ctrl.Result{}, err
 	}
 
@@ -273,25 +284,6 @@ func (r *PortForwardReconciler) processAllChanges(ctx context.Context, service *
 		logger.Error(err, "Failed to execute operations",
 			"failed_count", len(result.Failed))
 
-		// Update error context on failure
-		errorContext := &ErrorContext{
-			Timestamp:            getCurrentTime(),
-			LastFailureTime:      getCurrentTime(),
-			FailedPortOperations: buildFailedOperations(result.Failed, operations),
-			OverallStatus:        determineOverallStatus(len(result.Created)+len(result.Updated), len(result.Failed)),
-			LastErrorCode:        "OPERATION_FAILURE",
-			LastErrorMessage:     fmt.Sprintf("%d operations failed", len(result.Failed)),
-		}
-
-		// Increment retry count if there's existing error context
-		if existingErrCtx, extractErr := extractErrorContext(service); extractErr == nil && existingErrCtx != nil {
-			errorContext.RetryCount = existingErrCtx.RetryCount + 1
-		}
-
-		if err := updateErrorContextAnnotation(ctx, r.Client, service, errorContext); err != nil {
-			logger.Error(err, "Failed to update error context annotation")
-		}
-
 		// Publish failure events
 		if r.EventPublisher != nil {
 			for _, failedErr := range result.Failed {
@@ -301,11 +293,6 @@ func (r *PortForwardReconciler) processAllChanges(ctx context.Context, service *
 		}
 
 		return nil, ctrl.Result{}, err
-	} else {
-		// Clear error context on success
-		if err := clearErrorContextAnnotation(ctx, r.Client, service); err != nil {
-			logger.Error(err, "Failed to clear error context annotation")
-		}
 	}
 
 	logger.Info("Successfully processed service changes",
@@ -318,12 +305,29 @@ func (r *PortForwardReconciler) processAllChanges(ctx context.Context, service *
 	if successfulCount > 0 {
 		changeContext.PortForwardRules = collectRulesForService(desiredConfigs)
 
-		// Update service annotation with new change context (including rules)
-		if err := updateChangeContextAnnotation(ctx, r.Client, service, changeContext); err != nil {
-			logger.Error(err, "Failed to update change context with port forward rules")
-		} else {
-			logger.Info("Updated change context with port forward rules",
-				"rules_count", len(changeContext.PortForwardRules))
+		// Publish events for successful operations
+		if r.EventPublisher != nil && len(result.Created) > 0 {
+			for _, created := range result.Created {
+				lbIP := helpers.GetLBIP(service)
+				r.EventPublisher.PublishPortForwardCreatedEvent(ctx, service, changeContext,
+					fmt.Sprintf("%d:%d", created.DstPort, created.FwdPort),
+					lbIP, created.DstIP, created.DstPort, created.Protocol, "RulesCreatedSuccessfully")
+			}
+
+			// Publish update events
+			for _, updated := range result.Updated {
+				lbIP := helpers.GetLBIP(service)
+				r.EventPublisher.PublishPortForwardUpdatedEvent(ctx, service, changeContext,
+					fmt.Sprintf("%d:%d", updated.DstPort, updated.FwdPort),
+					lbIP, updated.DstIP, updated.DstPort, updated.Protocol, "RulesUpdatedSuccessfully")
+			}
+
+			// Publish deletion events
+			for _, deleted := range result.Deleted {
+				r.EventPublisher.PublishPortForwardDeletedEvent(ctx, service, changeContext,
+					fmt.Sprintf("%d:%d", deleted.DstPort, deleted.FwdPort),
+					deleted.DstPort, deleted.Protocol, "RulesDeletedSuccessfully")
+			}
 		}
 	}
 
@@ -351,7 +355,6 @@ func (r *PortForwardReconciler) processAllChanges(ctx context.Context, service *
 				deleted.DstPort, deleted.Protocol, "RulesDeletedSuccessfully")
 		}
 	}
-
 	return operations, ctrl.Result{}, nil
 }
 
@@ -409,24 +412,6 @@ func (r *PortForwardReconciler) handleFinalizerCleanup(ctx context.Context, serv
 	cleanupSuccessful, err := r.performCleanup(ctx, service)
 	if err != nil {
 		logger.Error(err, "Cleanup attempt failed", "attempt", attempts)
-
-		// Track cleanup failures in error context
-		errorContext := &ErrorContext{
-			Timestamp:        getCurrentTime(),
-			LastFailureTime:  getCurrentTime(),
-			OverallStatus:    "complete_failure",
-			LastErrorCode:    "CLEANUP_FAILURE",
-			LastErrorMessage: fmt.Sprintf("Cleanup failed: %v", err),
-		}
-
-		// Increment retry count from existing context
-		if existingErrCtx, extractErr := extractErrorContext(service); extractErr == nil && existingErrCtx != nil {
-			errorContext.RetryCount = existingErrCtx.RetryCount + 1
-		}
-
-		if updateErr := updateErrorContextAnnotation(ctx, r.Client, service, errorContext); updateErr != nil {
-			logger.Error(updateErr, "Failed to update error context for cleanup failure")
-		}
 
 		return ctrl.Result{RequeueAfter: r.Config.FinalizerRetryInterval}, nil
 	}

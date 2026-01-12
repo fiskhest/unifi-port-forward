@@ -1,7 +1,6 @@
 package controller
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"reflect"
@@ -13,7 +12,6 @@ import (
 	"unifi-port-forwarder/pkg/routers"
 
 	corev1 "k8s.io/api/core/v1"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // ChangeContext captures what changed and how
@@ -61,12 +59,6 @@ type PortChangeDetail struct {
 func (c *ChangeContext) HasRelevantChanges() bool {
 	return c.IPChanged || c.AnnotationChanged || c.SpecChanged
 }
-
-// ChangeContextAnnotationKey is the key used to store change context in service annotations
-const ChangeContextAnnotationKey = "unifi-port-forwarder/change-context"
-
-// ErrorContextAnnotationKey is key used to store error context in service annotations
-const ErrorContextAnnotationKey = "unifi-port-forwarder/error-context"
 
 // ErrorContext stores persistent error information for service
 type ErrorContext struct {
@@ -216,114 +208,6 @@ func serializeChangeContext(context *ChangeContext) (string, error) {
 	return string(jsonBytes), nil
 }
 
-// extractChangeContext extracts ChangeContext from service annotation with backward compatibility
-func extractChangeContext(service *corev1.Service) (*ChangeContext, error) {
-	ann := service.GetAnnotations()
-	if ann == nil {
-		return &ChangeContext{
-			ServiceKey:       fmt.Sprintf("%s/%s", service.Namespace, service.Name),
-			ServiceNamespace: service.Namespace,
-			ServiceName:      service.Name,
-		}, nil
-	}
-
-	contextJSON := ann[ChangeContextAnnotationKey]
-	if contextJSON == "" {
-		return &ChangeContext{
-			ServiceKey:       fmt.Sprintf("%s/%s", service.Namespace, service.Name),
-			ServiceNamespace: service.Namespace,
-			ServiceName:      service.Name,
-		}, nil
-	}
-
-	// Try to unmarshal as new format first (without redundant fields)
-	var serializable ChangeContextSerializable
-	if err := json.Unmarshal([]byte(contextJSON), &serializable); err == nil {
-		// Successfully parsed new format, convert to full ChangeContext
-		namespace, name := parseServiceKey(serializable.ServiceKey)
-		return &ChangeContext{
-			IPChanged:         serializable.IPChanged,
-			OldIP:             serializable.OldIP,
-			NewIP:             serializable.NewIP,
-			AnnotationChanged: serializable.AnnotationChanged,
-			OldAnnotation:     serializable.OldAnnotation,
-			NewAnnotation:     serializable.NewAnnotation,
-			SpecChanged:       serializable.SpecChanged,
-			PortChanges:       serializable.PortChanges,
-			ServiceKey:        serializable.ServiceKey,
-			ServiceNamespace:  namespace,
-			ServiceName:       name,
-		}, nil
-	}
-
-	// Fallback: try to unmarshal as old format (with redundant fields)
-	var context ChangeContext
-	if err := json.Unmarshal([]byte(contextJSON), &context); err != nil {
-		return nil, fmt.Errorf("failed to deserialize change context: %w", err)
-	}
-
-	// Ensure ServiceNamespace and ServiceName are populated
-	if context.ServiceNamespace == "" || context.ServiceName == "" {
-		namespace, name := parseServiceKey(context.ServiceKey)
-		context.ServiceNamespace = namespace
-		context.ServiceName = name
-	}
-
-	return &context, nil
-}
-
-// updateErrorContextAnnotation updates service with error context
-func updateErrorContextAnnotation(ctx context.Context, r client.Client, service *corev1.Service, errorContext *ErrorContext) error {
-	// Serialize error context
-	errorJSON, err := json.MarshalIndent(errorContext, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to marshal error context: %w", err)
-	}
-
-	// Update service annotations
-	annotations := service.GetAnnotations()
-	if annotations == nil {
-		annotations = make(map[string]string)
-	}
-	annotations[ErrorContextAnnotationKey] = string(errorJSON)
-	service.SetAnnotations(annotations)
-
-	return r.Update(ctx, service)
-}
-
-// clearErrorContextAnnotation removes error context from service
-func clearErrorContextAnnotation(ctx context.Context, r client.Client, service *corev1.Service) error {
-	annotations := service.GetAnnotations()
-	if annotations == nil {
-		return nil
-	}
-
-	delete(annotations, ErrorContextAnnotationKey)
-	service.SetAnnotations(annotations)
-
-	return r.Update(ctx, service)
-}
-
-// extractErrorContext extracts error context from service annotation
-func extractErrorContext(service *corev1.Service) (*ErrorContext, error) {
-	ann := service.GetAnnotations()
-	if ann == nil {
-		return nil, nil
-	}
-
-	errorJSON := ann[ErrorContextAnnotationKey]
-	if errorJSON == "" {
-		return nil, nil
-	}
-
-	var errorContext ErrorContext
-	if err := json.Unmarshal([]byte(errorJSON), &errorContext); err != nil {
-		return nil, fmt.Errorf("failed to deserialize error context: %w", err)
-	}
-
-	return &errorContext, nil
-}
-
 // determineOverallStatus calculates overall operation status
 func determineOverallStatus(successCount, failedCount int) string {
 	if failedCount == 0 {
@@ -368,25 +252,6 @@ func collectRulesForService(configs []routers.PortConfig) []string {
 		rules = append(rules, config.Name) // Already in "namespace/service:port" format
 	}
 	return rules
-}
-
-// updateChangeContextAnnotation updates service annotation with new change context
-func updateChangeContextAnnotation(ctx context.Context, r client.Client, service *corev1.Service, changeContext *ChangeContext) error {
-	// Serialize change context with port forward rules
-	contextJSON, err := serializeChangeContext(changeContext)
-	if err != nil {
-		return fmt.Errorf("failed to serialize change context: %w", err)
-	}
-
-	// Update service annotations
-	annotations := service.GetAnnotations()
-	if annotations == nil {
-		annotations = make(map[string]string)
-	}
-	annotations[ChangeContextAnnotationKey] = contextJSON
-	service.SetAnnotations(annotations)
-
-	return r.Update(ctx, service)
 }
 
 // parseServiceKey extracts namespace and name from a service key (format: "namespace/name")

@@ -1,12 +1,11 @@
 package controller
 
 import (
-	"fmt"
+	"unifi-port-forwarder/pkg/config"
 
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/event"
-	"unifi-port-forwarder/pkg/config"
 )
 
 // ServiceChangePredicate replaces the individual predicates with unified change detection
@@ -36,19 +35,6 @@ func (ServiceChangePredicate) Update(e event.UpdateEvent) bool {
 		return false
 	}
 
-	// Store change context in service annotation for reconciliation to use
-	if newSvc.Annotations == nil {
-		newSvc.Annotations = make(map[string]string)
-	}
-
-	contextJSON, err := serializeChangeContext(changeContext)
-	if err != nil {
-		// Log error but still trigger reconciliation
-		fmt.Printf("Warning: Failed to serialize change context: %v\n", err)
-		return true
-	}
-
-	newSvc.Annotations[ChangeContextAnnotationKey] = contextJSON
 	return true
 }
 
@@ -63,26 +49,6 @@ func (ServiceChangePredicate) Create(e event.CreateEvent) bool {
 		return false
 	}
 
-	// Create initial change context
-	changeContext := &ChangeContext{
-		ServiceKey:       fmt.Sprintf("%s/%s", svc.Namespace, svc.Name),
-		ServiceNamespace: svc.Namespace,
-		ServiceName:      svc.Name,
-		// This is a creation, not a change
-	}
-
-	// Store change context
-	if svc.Annotations == nil {
-		svc.Annotations = make(map[string]string)
-	}
-
-	contextJSON, err := serializeChangeContext(changeContext)
-	if err != nil {
-		fmt.Printf("Warning: Failed to serialize change context for create: %v\n", err)
-		return true
-	}
-
-	svc.Annotations[ChangeContextAnnotationKey] = contextJSON
 	return true
 }
 

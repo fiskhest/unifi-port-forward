@@ -6,7 +6,9 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"testing"
 
+	"github.com/filipowm/go-unifi/unifi"
 	v1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -26,8 +28,8 @@ type PortMapping struct {
 	ExternalPort int    // External port (DstPort)
 }
 
-// checkPortConflict checks if external port is already used by another service
-func checkPortConflict(externalPort int, serviceKey string) error {
+// CheckPortConflict checks if external port is already used by another service
+func CheckPortConflict(externalPort int, serviceKey string) error {
 	portMutex.Lock()
 	defer portMutex.Unlock()
 
@@ -242,7 +244,7 @@ func GetPortConfigs(service *v1.Service, lbIP string, annotationKey string) ([]r
 		}
 
 		// Check for port conflicts with other services
-		if err := checkPortConflict(externalPort, serviceKey); err != nil {
+		if err := CheckPortConflict(externalPort, serviceKey); err != nil {
 			return nil, err
 		}
 
@@ -448,4 +450,197 @@ func IsPortForwardRuleCRDAvailable(ctx context.Context, client client.Client) bo
 	}
 
 	return false
+}
+
+// MockRouter for testing
+type MockRouter struct {
+	rules []*unifi.PortForward
+}
+
+func (m *MockRouter) ListAllPortForwards(ctx context.Context) ([]*unifi.PortForward, error) {
+	return m.rules, nil
+}
+
+func (m *MockRouter) AddPort(ctx context.Context, config routers.PortConfig) error {
+	return nil
+}
+
+func (m *MockRouter) UpdatePort(ctx context.Context, externalPort int, config routers.PortConfig) error {
+	return nil
+}
+
+func (m *MockRouter) CheckPort(ctx context.Context, port int) (*unifi.PortForward, bool, error) {
+	for _, rule := range m.rules {
+		if rule.DstPort == string(rune(port)) {
+			return rule, true, nil
+		}
+	}
+	return nil, false, nil
+}
+
+func (m *MockRouter) RemovePort(ctx context.Context, config routers.PortConfig) error {
+	return nil
+}
+
+func TestSyncPortTrackingWithRouter(t *testing.T) {
+	// Reset tracking before test
+	ClearPortConflictTracking()
+
+	// Create mock router with existing rules
+	mockRouter := &MockRouter{
+		rules: []*unifi.PortForward{
+			{
+				Name:    "default/web-service:http",
+				DstPort: "80",
+				FwdPort: "8080",
+				Proto:   "tcp",
+				Enabled: true,
+			},
+			{
+				Name:    "kube-system/api-server:https",
+				DstPort: "443",
+				FwdPort: "6443",
+				Proto:   "tcp",
+				Enabled: true,
+			},
+			{
+				Name:    "manual-rule",
+				DstPort: "89",
+				FwdPort: "8089",
+				Proto:   "tcp",
+				Enabled: true,
+			},
+		},
+	}
+
+	ctx := context.Background()
+
+	// Test sync
+	err := SyncPortTrackingWithRouter(ctx, mockRouter)
+	if err != nil {
+		t.Fatalf("SyncPortTrackingWithRouter failed: %v", err)
+	}
+
+	// Test conflicts with proper service keys
+	err = CheckPortConflict(80, "default/web-service")
+	if err != nil {
+		t.Errorf("Expected no conflict for own service port 80, got: %v", err)
+	}
+
+	err = CheckPortConflict(80, "other-service")
+	if err == nil {
+		t.Error("Expected conflict for other service using port 80")
+	}
+
+	err = CheckPortConflict(443, "kube-system/api-server")
+	if err != nil {
+		t.Errorf("Expected no conflict for own service port 443, got: %v", err)
+	}
+
+	// Test manual rule (should NOT show as conflict since we skip manual rules)
+	err = CheckPortConflict(89, "default/new-service")
+	if err != nil {
+		t.Errorf("Expected no conflict for port 89 used by manual rule (manual rules are skipped), got: %v", err)
+	}
+}
+
+func TestIsManagedRule(t *testing.T) {
+	tests := []struct {
+		name     string
+		ruleName string
+		expected bool
+	}{
+		{
+			name:     "standard managed rule",
+			ruleName: "default/web-service:http",
+			expected: true,
+		},
+		{
+			name:     "managed rule with complex port name",
+			ruleName: "production/database:mysql-3306",
+			expected: true,
+		},
+		{
+			name:     "manual rule without colon",
+			ruleName: "manual-port-forward",
+			expected: false,
+		},
+		{
+			name:     "rule without namespace slash",
+			ruleName: "web-service:http",
+			expected: false,
+		},
+		{
+			name:     "rule without service name",
+			ruleName: "default/:http",
+			expected: false,
+		},
+		{
+			name:     "rule without namespace",
+			ruleName: "/service:http",
+			expected: false,
+		},
+		{
+			name:     "empty string",
+			ruleName: "",
+			expected: false,
+		},
+		{
+			name:     "only colon",
+			ruleName: ":",
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := isManagedRule(tt.ruleName)
+			if result != tt.expected {
+				t.Errorf("isManagedRule(%q) = %v, expected %v", tt.ruleName, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestExtractServiceKeyFromRuleName(t *testing.T) {
+	tests := []struct {
+		name     string
+		ruleName string
+		expected string
+	}{
+		{
+			name:     "standard rule name",
+			ruleName: "default/web-service:http",
+			expected: "default/web-service",
+		},
+		{
+			name:     "rule with complex port name",
+			ruleName: "production/database:mysql-3306",
+			expected: "production/database",
+		},
+		{
+			name:     "manual rule without colon",
+			ruleName: "manual-port-forward",
+			expected: "manual-port-forward",
+		},
+		{
+			name:     "empty string",
+			ruleName: "",
+			expected: "",
+		},
+		{
+			name:     "only colon",
+			ruleName: ":",
+			expected: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := extractServiceKeyFromRuleName(tt.ruleName)
+			if result != tt.expected {
+				t.Errorf("extractServiceKeyFromRuleName(%q) = %q, expected %q", tt.ruleName, result, tt.expected)
+			}
+		})
+	}
 }

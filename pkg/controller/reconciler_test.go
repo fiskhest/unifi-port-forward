@@ -548,36 +548,30 @@ func TestReconcile_RouterCommunication_Failures(t *testing.T) {
 	// Verify rule was created
 	env.AssertRuleExistsByName(t, "default/update-test:http")
 
-	// Now modify the service to trigger an UpdatePort (same port, different IP)
+	// Now modify the service to trigger an UpdatePort (same external port, different IP)
 	env.MockRouter.ResetOperationCounts()
 	env.MockRouter.SetSimulatedFailure("UpdatePort", true)
 
 	// Update the service IP to trigger an update (keeping same port)
-	// Also set change context annotation to simulate IP change detection
+	// This should be detected as an IP change
 	updateTestService.Spec.LoadBalancerIP = "192.168.1.201" // Different IP
-
-	// Set change context annotation to simulate IP change detection (using new format)
-	changeContextJSON := `{
-  "ip_changed": true,
-  "old_ip": "192.168.1.200",
-  "new_ip": "192.168.1.201",
-  "annotation_changed": false,
-  "spec_changed": false,
-  "service_key": "default/update-test"
-}`
-	if updateTestService.Annotations == nil {
-		updateTestService.Annotations = make(map[string]string)
-	}
-	updateTestService.Annotations["unifi-port-forwarder/change-context"] = changeContextJSON
 
 	if err := env.UpdateService(ctx, updateTestService); err != nil {
 		t.Fatalf("Failed to update service for UpdatePort test: %v", err)
 	}
 
 	// Reconcile should attempt to update the rule and fail
-	_, err = env.ReconcileService(updateTestService)
+	ctrlResult, err := env.ReconcileService(updateTestService)
+
+	// Check what operations were attempted
+	ops = env.MockRouter.GetOperationCounts()
+	t.Logf("Operations attempted: %+v", ops)
+
 	if err == nil {
 		t.Error("Expected failure for Failed to update existing rule scenario, but got none")
+		t.Logf("Result: %+v", ctrlResult)
+	} else {
+		t.Logf("Got expected error: %v", err)
 	}
 
 	env.MockRouter.SetSimulatedFailure("UpdatePort", false)

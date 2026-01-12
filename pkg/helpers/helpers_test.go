@@ -88,7 +88,7 @@ func TestUnmarkPortUsed(t *testing.T) {
 	markPortUsed(port, serviceKey)
 
 	// Verify port is marked
-	if err := checkPortConflict(port, serviceKey); err != nil {
+	if err := CheckPortConflict(port, serviceKey); err != nil {
 		t.Errorf("Expected no conflict for own service, got error: %v", err)
 	}
 
@@ -96,7 +96,7 @@ func TestUnmarkPortUsed(t *testing.T) {
 	UnmarkPortUsed(port)
 
 	// Verify port is no longer marked
-	if err := checkPortConflict(port, "different/service"); err != nil {
+	if err := CheckPortConflict(port, "different/service"); err != nil {
 		t.Errorf("Expected no conflict after unmarking, got error: %v", err)
 	}
 }
@@ -115,7 +115,7 @@ func TestUnmarkPortsForService(t *testing.T) {
 
 	// Verify all ports are marked
 	for _, port := range ports {
-		if err := checkPortConflict(port, serviceKey); err != nil {
+		if err := CheckPortConflict(port, serviceKey); err != nil {
 			t.Errorf("Expected no conflict for own service on port %d, got error: %v", port, err)
 		}
 	}
@@ -125,7 +125,7 @@ func TestUnmarkPortsForService(t *testing.T) {
 
 	// Verify all ports are no longer marked
 	for _, port := range ports {
-		if err := checkPortConflict(port, "different/service"); err != nil {
+		if err := CheckPortConflict(port, "different/service"); err != nil {
 			t.Errorf("Expected no conflict after unmarking service on port %d, got error: %v", port, err)
 		}
 	}
@@ -154,7 +154,7 @@ func TestPortConflictTracking_ConcurrentAccess(t *testing.T) {
 				markPortUsed(port, serviceKey)
 
 				// Check conflict
-				err := checkPortConflict(port, serviceKey)
+				err := CheckPortConflict(port, serviceKey)
 				if err != nil {
 					errors <- err
 					return
@@ -187,11 +187,11 @@ func TestClearPortConflictTracking_InProduction(t *testing.T) {
 	ClearPortConflictTracking()
 
 	// Verify all tracking is cleared
-	if err := checkPortConflict(8080, "any/service"); err != nil {
+	if err := CheckPortConflict(8080, "any/service"); err != nil {
 		t.Errorf("Expected no conflict after clearing tracking, got error: %v", err)
 	}
 
-	if err := checkPortConflict(9090, "any/service"); err != nil {
+	if err := CheckPortConflict(9090, "any/service"); err != nil {
 		t.Errorf("Expected no conflict after clearing tracking, got error: %v", err)
 	}
 }

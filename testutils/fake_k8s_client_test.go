@@ -1,12 +1,15 @@
 package testutils
 
 import (
+	"context"
 	"strings"
 	"testing"
 
-	v1 "k8s.io/api/core/v1"
 	"unifi-port-forwarder/pkg/config"
 	"unifi-port-forwarder/pkg/helpers"
+
+	"github.com/filipowm/go-unifi/unifi"
+	v1 "k8s.io/api/core/v1"
 )
 
 // TestMultiPortService_ValidAnnotation tests multi-port service with valid annotation
@@ -211,5 +214,297 @@ func TestDefaultPortMapping(t *testing.T) {
 		if pc.DstPort != int(servicePort.Port) {
 			t.Errorf("Expected external port %d for %s, got %d", servicePort.Port, portName, pc.DstPort)
 		}
+	}
+}
+
+func TestSyncPortTrackingWithRouterSelective_ListingError(t *testing.T) {
+	// Clear tracking for test isolation
+	helpers.ClearPortConflictTracking()
+
+	// Create comprehensive mock router
+	mockRouter := NewMockRouter()
+	mockRouter.ClearAllPortForwards()
+	mockRouter.ResetCallCounts()
+
+	ctx := context.Background()
+
+	// Setup: Simulate ListAllPortForwards failure
+	mockRouter.SetSimulatedFailure("ListAllPortForwards", true)
+
+	// Test: skipIfEmpty=true
+	err := helpers.SyncPortTrackingWithRouterSelective(ctx, mockRouter, true)
+
+	// Verify: Should return error
+	if err == nil {
+		t.Error("Expected error when ListAllPortForwards fails")
+	}
+
+	if !strings.Contains(err.Error(), "simulated ListAllPortForwards failure") {
+		t.Errorf("Expected specific error message, got: %v", err)
+	}
+
+	// Should call ListAllPortForwards once before failing
+	if mockRouter.GetCallCount("ListAllPortForwards") != 1 {
+		t.Errorf("Expected ListAllPortForwards to be called once, got %d", mockRouter.GetCallCount("ListAllPortForwards"))
+	}
+}
+
+func TestSyncPortTrackingWithRouterSelective_SkipWhenEmpty(t *testing.T) {
+	// Clear tracking for test isolation
+	helpers.ClearPortConflictTracking()
+
+	// Create comprehensive mock router
+	mockRouter := NewMockRouter()
+	mockRouter.ClearAllPortForwards()
+	mockRouter.ResetCallCounts()
+
+	ctx := context.Background()
+
+	// Setup: Only manual rules (no managed format)
+	mockRouter.AddPortForwardRule(unifi.PortForward{
+		Name:    "manual-rule",
+		DstPort: "80",
+		FwdPort: "8080",
+		Proto:   "tcp",
+		Enabled: true,
+	})
+
+	// Test: skipIfEmpty=true
+	err := helpers.SyncPortTrackingWithRouterSelective(ctx, mockRouter, true)
+
+	// Verify: Should skip sync
+	if err != nil {
+		t.Errorf("Expected no error when skipping, got: %v", err)
+	}
+
+	// Should call ListAllPortForwards once to check for managed rules
+	if mockRouter.GetCallCount("ListAllPortForwards") != 1 {
+		t.Errorf("Expected ListAllPortForwards to be called once, got %d", mockRouter.GetCallCount("ListAllPortForwards"))
+	}
+
+	// Should not perform sync (no additional calls for sync)
+	if mockRouter.GetCallCount("AddPort") != 0 || mockRouter.GetCallCount("UpdatePort") != 0 {
+		t.Error("Should not perform any port modifications when skipping")
+	}
+}
+
+func TestSyncPortTrackingWithRouterSelective_SyncWhenNotEmpty(t *testing.T) {
+	// Clear tracking for test isolation
+	helpers.ClearPortConflictTracking()
+
+	// Create comprehensive mock router
+	mockRouter := NewMockRouter()
+	mockRouter.ClearAllPortForwards()
+	mockRouter.ResetCallCounts()
+
+	ctx := context.Background()
+
+	// Setup: Include managed rules in proper format
+	mockRouter.AddPortForwardRule(unifi.PortForward{
+		Name:    "default/service:http",
+		DstPort: "80",
+		FwdPort: "8080",
+		Proto:   "tcp",
+		Enabled: true,
+	})
+
+	// Test: skipIfEmpty=true
+	err := helpers.SyncPortTrackingWithRouterSelective(ctx, mockRouter, true)
+
+	// Verify: Should perform full sync
+	if err != nil {
+		t.Errorf("Expected no error during sync, got: %v", err)
+	}
+
+	// Should call ListAllPortForwards twice (check + sync)
+	if mockRouter.GetCallCount("ListAllPortForwards") != 2 {
+		t.Errorf("Expected ListAllPortForwards to be called twice, got %d", mockRouter.GetCallCount("ListAllPortForwards"))
+	}
+
+	// Verify sync operation occurred (port tracking should be populated)
+	err = helpers.CheckPortConflict(80, "default/service")
+	if err != nil {
+		t.Errorf("Expected port tracking to be populated after sync, got: %v", err)
+	}
+}
+
+func TestSyncPortTrackingWithRouterSelective_NoSkipFlag(t *testing.T) {
+	// Clear tracking for test isolation
+	helpers.ClearPortConflictTracking()
+
+	// Create comprehensive mock router
+	mockRouter := NewMockRouter()
+	mockRouter.ClearAllPortForwards()
+	mockRouter.ResetCallCounts()
+
+	ctx := context.Background()
+
+	// Setup: No rules at all (empty router)
+
+	// Test: skipIfEmpty=false (should always sync)
+	err := helpers.SyncPortTrackingWithRouterSelective(ctx, mockRouter, false)
+
+	// Verify: Should always sync regardless of content
+	if err != nil {
+		t.Errorf("Expected no error during forced sync, got: %v", err)
+	}
+
+	// Should call ListAllPortForwards once for sync
+	if mockRouter.GetCallCount("ListAllPortForwards") != 1 {
+		t.Errorf("Expected ListAllPortForwards to be called once, got %d", mockRouter.GetCallCount("ListAllPortForwards"))
+	}
+}
+
+func TestSyncPortTrackingWithRouterSelective_EdgeCases(t *testing.T) {
+	tests := []struct {
+		name              string
+		initialRules      []*unifi.PortForward
+		skipIfEmpty       bool
+		expectSync        bool
+		expectedListCalls int
+		expectError       bool
+	}{
+		{
+			name:              "no rules skip true",
+			initialRules:      []*unifi.PortForward{},
+			skipIfEmpty:       true,
+			expectSync:        false,
+			expectedListCalls: 1,
+			expectError:       false,
+		},
+		{
+			name: "managed rules skip true",
+			initialRules: []*unifi.PortForward{
+				{
+					Name:    "default/app:http",
+					DstPort: "80",
+					FwdPort: "8080",
+					Proto:   "tcp",
+					Enabled: true,
+				},
+			},
+			skipIfEmpty:       true,
+			expectSync:        true,
+			expectedListCalls: 2,
+			expectError:       false,
+		},
+		{
+			name: "manual rules skip true",
+			initialRules: []*unifi.PortForward{
+				{
+					Name:    "manual-rule-1",
+					DstPort: "80",
+					FwdPort: "8080",
+					Proto:   "tcp",
+					Enabled: true,
+				},
+			},
+			skipIfEmpty:       true,
+			expectSync:        false,
+			expectedListCalls: 1,
+			expectError:       false,
+		},
+		{
+			name: "mixed rules skip true",
+			initialRules: []*unifi.PortForward{
+				{
+					Name:    "default/service:http",
+					DstPort: "80",
+					FwdPort: "8080",
+					Proto:   "tcp",
+					Enabled: true,
+				},
+				{
+					Name:    "manual-rule",
+					DstPort: "89",
+					FwdPort: "8089",
+					Proto:   "tcp",
+					Enabled: true,
+				},
+			},
+			skipIfEmpty:       true,
+			expectSync:        true,
+			expectedListCalls: 2,
+			expectError:       false,
+		},
+		{
+			name:              "no rules skip false",
+			initialRules:      []*unifi.PortForward{},
+			skipIfEmpty:       false,
+			expectSync:        true,
+			expectedListCalls: 1,
+			expectError:       false,
+		},
+		{
+			name: "complex service names",
+			initialRules: []*unifi.PortForward{
+				{
+					Name:    "production/database:mysql-3306",
+					DstPort: "3306",
+					FwdPort: "3306",
+					Proto:   "tcp",
+					Enabled: true,
+				},
+				{
+					Name:    "kube-system/api-server:https",
+					DstPort: "443",
+					FwdPort: "6443",
+					Proto:   "tcp",
+					Enabled: true,
+				},
+			},
+			skipIfEmpty:       true,
+			expectSync:        true,
+			expectedListCalls: 2,
+			expectError:       false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Clear tracking for test isolation
+			helpers.ClearPortConflictTracking()
+
+			// Create comprehensive mock router
+			mockRouter := NewMockRouter()
+			mockRouter.ClearAllPortForwards()
+			mockRouter.ResetCallCounts()
+
+			ctx := context.Background()
+
+			// Setup initial rules
+			for _, rule := range tt.initialRules {
+				mockRouter.AddPortForwardRule(*rule)
+			}
+
+			// Test the function
+			err := helpers.SyncPortTrackingWithRouterSelective(ctx, mockRouter, tt.skipIfEmpty)
+
+			// Verify error expectation
+			if tt.expectError && err == nil {
+				t.Errorf("Expected error but got none")
+			}
+			if !tt.expectError && err != nil {
+				t.Errorf("Unexpected error: %v", err)
+			}
+
+			// Verify ListAllPortForwards call count
+			if mockRouter.GetCallCount("ListAllPortForwards") != tt.expectedListCalls {
+				t.Errorf("Expected ListAllPortForwards to be called %d times, got %d", tt.expectedListCalls, mockRouter.GetCallCount("ListAllPortForwards"))
+			}
+
+			// Verify sync occurred based on expectation
+			if tt.expectSync {
+				// Should have performed sync (at least one ListAllPortForwards call for sync)
+				if mockRouter.GetCallCount("ListAllPortForwards") < 1 {
+					t.Error("Expected sync to occur but ListAllPortForwards was not called")
+				}
+			} else {
+				// Should have skipped sync (only the initial check)
+				if mockRouter.GetCallCount("ListAllPortForwards") != 1 {
+					t.Error("Expected sync to be skipped but additional operations were performed")
+				}
+			}
+		})
 	}
 }

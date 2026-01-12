@@ -216,7 +216,6 @@ func runController(cmd *cobra.Command, args []string) error {
 		os.Exit(0)
 	}()
 
-	fmt.Println("Starting port forwarding controller")
 	return mgr.Start(ctrl.SetupSignalHandler())
 }
 
