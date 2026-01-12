@@ -1,0 +1,17 @@
+apiVersion: port-forwarder.unifi.com/v1alpha1
+kind: PortForwardRule
+metadata:
+  name: web-service-http
+  namespace: production
+  labels:
+    app: web-service
+spec:
+  externalPort: 80
+  protocol: tcp
+  serviceRef:
+    name: web-service
+    port: http
+  enabled: true
+  description: "Production web service HTTP access"
+  interface: "wan"
+  logEnabled: false

@@ -1,0 +1,14 @@
+apiVersion: port-forwarder.unifi.com/v1alpha1
+kind: PortForwardRule
+metadata:
+  name: minecraft-server
+  namespace: default
+spec:
+  externalPort: 25565
+  protocol: tcp
+  destinationIP: "192.168.1.100"
+  destinationPort: 25565
+  enabled: true
+  description: "Minecraft server port forwarding"
+  interface: "wan"
+  logEnabled: true

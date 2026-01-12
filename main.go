@@ -19,6 +19,7 @@ import (
 	"unifi-port-forwarder/cmd/cleaner"
 	"unifi-port-forwarder/pkg/config"
 	"unifi-port-forwarder/pkg/controller"
+	"unifi-port-forwarder/pkg/helpers"
 	"unifi-port-forwarder/pkg/routers"
 
 	corev1 "k8s.io/api/core/v1"
@@ -155,6 +156,27 @@ func runController(cmd *cobra.Command, args []string) error {
 	// Setup controller
 	if err := reconciler.SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("failed to setup controller: %w", err)
+	}
+
+	// Check if PortForwardRule CRD is available
+	if helpers.IsPortForwardRuleCRDAvailable(context.Background(), mgr.GetClient()) {
+		logger.Info("PortForwardRule CRD detected, enabling PortForwardRule controller")
+
+		// Create PortForwardRule controller
+		ruleReconciler := &controller.PortForwardRuleReconciler{
+			Client:   mgr.GetClient(),
+			Scheme:   mgr.GetScheme(),
+			Router:   router,
+			Config:   &cfg,
+			Recorder: mgr.GetEventRecorderFor("portforwardrule-controller"),
+		}
+
+		// Setup PortForwardRule controller
+		if err := ruleReconciler.SetupWithManager(mgr); err != nil {
+			return fmt.Errorf("failed to setup PortForwardRule controller: %w", err)
+		}
+	} else {
+		logger.Info("PortForwardRule CRD not found, PortForwardRule controller disabled (annotation-based mode only)")
 	}
 
 	// Create and start periodic reconciler (always on)

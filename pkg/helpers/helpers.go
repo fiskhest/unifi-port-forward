@@ -1,12 +1,16 @@
 package helpers
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
 	"sync"
 
 	v1 "k8s.io/api/core/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"unifi-port-forwarder/pkg/routers"
 )
 
@@ -283,4 +287,165 @@ func GetServicePortByName(service *v1.Service, name string) v1.ServicePort {
 		}
 	}
 	return v1.ServicePort{}
+}
+
+// SyncPortTrackingWithRouter synchronizes port tracking with the router's current port forwarding rules
+func SyncPortTrackingWithRouter(ctx context.Context, router routers.Router) error {
+	rules, err := router.ListAllPortForwards(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to list port forwards: %w", err)
+	}
+
+	// Clear existing tracking
+	ResetPortTracking()
+
+	// Add managed rules to tracking
+	for _, rule := range rules {
+		if isManagedRule(rule.Name) {
+			externalPort := 0
+			if rule.DstPort != "" {
+				if port, err := strconv.Atoi(rule.DstPort); err == nil {
+					externalPort = port
+				}
+			}
+			if externalPort > 0 {
+				serviceKey := extractServiceKeyFromRuleName(rule.Name)
+				markPortUsed(externalPort, serviceKey)
+			}
+		}
+	}
+
+	return nil
+}
+
+// SyncPortTrackingWithRouterSelective synchronizes port tracking only when there are managed rules
+func SyncPortTrackingWithRouterSelective(ctx context.Context, router routers.Router, skipIfEmpty bool) error {
+	// When skipIfEmpty=false, we always sync (single call)
+	if !skipIfEmpty {
+		rules, err := router.ListAllPortForwards(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to list port forwards: %w", err)
+		}
+
+		// Clear existing tracking
+		ResetPortTracking()
+
+		// Add managed rules to tracking
+		for _, rule := range rules {
+			if isManagedRule(rule.Name) {
+				externalPort := 0
+				if rule.DstPort != "" {
+					if port, err := strconv.Atoi(rule.DstPort); err == nil {
+						externalPort = port
+					}
+				}
+				if externalPort > 0 {
+					serviceKey := extractServiceKeyFromRuleName(rule.Name)
+					markPortUsed(externalPort, serviceKey)
+				}
+			}
+		}
+		return nil
+	}
+
+	// When skipIfEmpty=true, we check first, then sync if needed (potentially 2 calls)
+	rules, err := router.ListAllPortForwards(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to list port forwards: %w", err)
+	}
+
+	// Check if we have any managed rules
+	hasManagedRules := false
+	for _, rule := range rules {
+		if isManagedRule(rule.Name) {
+			hasManagedRules = true
+			break
+		}
+	}
+
+	// Skip sync if no managed rules and skipIfEmpty is true
+	if skipIfEmpty && !hasManagedRules {
+		return nil
+	}
+
+	// We have managed rules, need to sync - call ListAllPortForwards again
+	rules, err = router.ListAllPortForwards(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to list port forwards for sync: %w", err)
+	}
+
+	// Clear existing tracking
+	ResetPortTracking()
+
+	// Add managed rules to tracking
+	for _, rule := range rules {
+		if isManagedRule(rule.Name) {
+			externalPort := 0
+			if rule.DstPort != "" {
+				if port, err := strconv.Atoi(rule.DstPort); err == nil {
+					externalPort = port
+				}
+			}
+			if externalPort > 0 {
+				serviceKey := extractServiceKeyFromRuleName(rule.Name)
+				markPortUsed(externalPort, serviceKey)
+			}
+		}
+	}
+
+	return nil
+}
+
+// isManagedRule checks if a rule is managed by the controller (has namespace/service:port format)
+func isManagedRule(ruleName string) bool {
+	// Managed rules follow the pattern: namespace/service:port
+	parts := strings.SplitN(ruleName, ":", 2)
+	if len(parts) != 2 {
+		return false
+	}
+
+	// Check if the first part contains a namespace/service pattern
+	servicePart := parts[0]
+	serviceParts := strings.SplitN(servicePart, "/", 2)
+
+	// Must have both namespace and service, and neither should be empty
+	return len(serviceParts) == 2 && serviceParts[0] != "" && serviceParts[1] != ""
+}
+
+// extractServiceKeyFromRuleName extracts the service key (namespace/service) from a rule name
+func extractServiceKeyFromRuleName(ruleName string) string {
+	// Rule format: namespace/service:port
+	parts := strings.SplitN(ruleName, ":", 2)
+	if len(parts) == 0 {
+		return ""
+	}
+
+	// Return the first part (namespace/service) or the whole string if no colon
+	if len(parts) == 1 {
+		return parts[0]
+	}
+
+	return parts[0]
+}
+
+// IsPortForwardRuleCRDAvailable checks if the PortForwardRule CRD exists and is established
+func IsPortForwardRuleCRDAvailable(ctx context.Context, client client.Client) bool {
+	crdName := "portforwardrules.port-forwarder.unifi.com"
+
+	// Try to get the CRD
+	crd := &apiextensionsv1.CustomResourceDefinition{}
+	err := client.Get(ctx, types.NamespacedName{Name: crdName}, crd)
+	if err != nil {
+		// CRD doesn't exist or other error
+		return false
+	}
+
+	// Check if CRD is established (ready for use)
+	for _, condition := range crd.Status.Conditions {
+		if condition.Type == apiextensionsv1.Established && condition.Status == apiextensionsv1.ConditionTrue {
+			return true
+		}
+	}
+
+	return false
 }

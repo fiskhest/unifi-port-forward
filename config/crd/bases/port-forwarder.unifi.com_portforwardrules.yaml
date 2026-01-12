@@ -1,0 +1,280 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.14.0
+  name: portforwardrules.port-forwarder.unifi.com
+spec:
+  group: port-forwarder.unifi.com
+  names:
+    kind: PortForwardRule
+    listKind: PortForwardRuleList
+    plural: portforwardrules
+    singular: portforwardrule
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.externalPort
+      name: "External Port"
+      type: integer
+    - jsonPath: .spec.protocol
+      name: "Protocol"
+      type: string
+    - jsonPath: .spec.serviceRef.name
+      name: "Service"
+      type: string
+    - jsonPath: .spec.enabled
+      name: "Enabled"
+      type: boolean
+    - jsonPath: .status.phase
+      name: "Phase"
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: PortForwardRule is the Schema for the portforwardrules API
+        properties:
+          apiVersion:
+            description: 'APIVersion defines the versioned schema of this representation
+              of an object. Servers should convert recognized schemas to the latest
+              internal version, and may reject unrecognized values. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources'
+            type: string
+          kind:
+            description: 'Kind is a string value representing the REST resource this
+              object represents. Servers may infer this from the endpoint the client
+              submits requests to. Cannot be updated. In CamelCase. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds'
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: PortForwardRuleSpec defines the desired state of PortForwardRule
+            properties:
+              conflictPolicy:
+                default: warn
+                description: ConflictPolicy determines how to handle port conflicts
+                enum:
+                - warn
+                - error
+                - ignore
+                type: string
+              description:
+                description: Description provides a human-readable description
+                maxLength: 256
+                type: string
+              destinationIP:
+                description: DestinationIP is the target IP address (mutually
+                  exclusive with ServiceRef)
+                format: ipv4
+                type: string
+              destinationPort:
+                description: DestinationPort is the target port (required if DestinationIP
+                  is set)
+                maximum: 65535
+                minimum: 1
+                type: integer
+              enabled:
+                default: true
+                description: Enabled controls whether this rule is active
+                type: boolean
+              externalPort:
+                description: ExternalPort is the WAN port to forward
+                maximum: 65535
+                minimum: 1
+                type: integer
+              interface:
+                default: wan
+                description: Interface specifies the network interface
+                type: string
+              logEnabled:
+                default: false
+                description: LogEnabled enables logging for this rule
+                type: boolean
+              priority:
+                default: 500
+                description: Priority determines rule precedence (higher wins conflicts)
+                maximum: 1000
+                minimum: 0
+                type: integer
+              protocol:
+                default: tcp
+                description: Protocol specifies the forwarding protocol
+                enum:
+                - tcp
+                - udp
+                - both
+                type: string
+              serviceRef:
+                description: ServiceRef references a Service for destination (mutually
+                  exclusive with DestinationIP)
+                properties:
+                  name:
+                    description: Name is the Service name (required)
+                    type: string
+                  namespace:
+                    description: Namespace is the Service namespace (defaults to rule
+                      namespace)
+                    type: string
+                  port:
+                    description: Port is the service port name or number (required)
+                    type: string
+                required:
+                - name
+                - port
+                type: object
+              sourceIPRestriction:
+                description: SourceIPRestriction limits source IP access (empty
+                  means no restriction)
+                format: ipv4
+                type: string
+            required:
+            - externalPort
+            type: object
+          status:
+            description: PortForwardRuleStatus defines the observed state of PortForwardRule
+            properties:
+              conditions:
+                description: Conditions represent the latest available observations
+                  of the rule's state
+                items:
+                  description: "Condition contains details for one aspect of the current
+                    state of this API Resource."
+                  properties:
+                    lastTransitionTime:
+                      description: lastTransitionTime is the last time the condition
+                        transitioned from one status to another.
+                      format: date-time
+                      type: string
+                    message:
+                      description: message is a human readable message indicating
+                        details about the transition.
+                      type: string
+                    observedGeneration:
+                      description: observedGeneration represents the .metadata.generation
+                        that the condition was set based upon.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: reason contains a programmatic identifier indicating
+                        the reason for the condition's last transition.
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase.
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              conflicts:
+                description: Conflicts with other port forwarding rules
+                items:
+                  description: PortConflict represents a conflict with another port
+                    forwarding rule
+                  properties:
+                    conflictingNamespace:
+                      description: ConflictingNamespace is the namespace of the conflicting
+                        rule
+                      type: string
+                    conflictingResource:
+                      description: ConflictingResource is the name of the conflicting
+                        resource
+                      type: string
+                    conflictType:
+                      description: ConflictType is the type of conflict
+                      enum:
+                      - PortConflict
+                      - ServiceConflict
+                      - IPConflict
+                      type: string
+                    description:
+                      description: Description describes the conflict
+                      type: string
+                    severity:
+                      description: Severity is the conflict severity
+                      enum:
+                      - Warning
+                      - Error
+                      type: string
+                    timestamp:
+                      description: Timestamp when the conflict was detected
+                      format: date-time
+                      type: string
+                  type: object
+                type: array
+              errorInfo:
+                description: ErrorInfo contains error details when phase is Failed
+                properties:
+                  code:
+                    description: Code is the error code
+                    type: string
+                  lastFailureTime:
+                    description: LastFailureTime is when the error occurred
+                    format: date-time
+                    type: string
+                  message:
+                    description: Message is the error message
+                    type: string
+                  retryCount:
+                    description: RetryCount is the number of retry attempts
+                    type: integer
+                type: object
+              lastAppliedTime:
+                description: LastAppliedTime is when the rule was last applied
+                format: date-time
+                type: string
+              observedGeneration:
+                description: ObservedGeneration is the generation observed by the
+                  controller
+                format: int64
+                type: integer
+              phase:
+                description: Phase is the current phase of the rule
+                enum:
+                - Pending
+                - Active
+                - Failed
+                - Unknown
+                type: string
+              routerRuleID:
+                description: RouterRuleID is the ID of the rule on the router
+                type: string
+              serviceStatus:
+                description: ServiceStatus contains service-specific status
+                properties:
+                  loadBalancerIP:
+                    description: LoadBalancerIP is the service's LoadBalancer IP
+                    type: string
+                  name:
+                    description: Name is the service name
+                    type: string
+                  namespace:
+                    description: Namespace is the service namespace
+                    type: string
+                  servicePort:
+                    description: ServicePort is the resolved service port number
+                    format: int32
+                    type: integer
+                  servicePortName:
+                    description: ServicePortName is the resolved service port name
+                    type: string
+                type: object
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

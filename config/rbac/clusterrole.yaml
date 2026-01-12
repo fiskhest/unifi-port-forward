@@ -1,0 +1,36 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: portforwardrule-controller
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - services
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+- apiGroups:
+  - port-forwarder.unifi.com
+  resources:
+  - portforwardrules
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - port-forwarder.unifi.com
+  resources:
+  - portforwardrules/status
+  verbs:
+  - get
+  - update
+  - patch
