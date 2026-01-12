@@ -25,7 +25,7 @@ func TestReconcile_RealServiceCreation(t *testing.T) {
 
 	// Create test service with port forwarding annotation
 	service := env.CreateTestService("default", "test-service",
-		map[string]string{config.FilterAnnotation: "http:8080"},
+		map[string]string{config.FilterAnnotation: "8080:http"},
 		[]corev1.ServicePort{{Name: "http", Port: 80, Protocol: corev1.ProtocolTCP}},
 		"192.168.1.100")
 
@@ -67,7 +67,7 @@ func TestReconcile_ServiceUpdate_PortChange(t *testing.T) {
 
 	// Create initial service
 	initialService := env.CreateTestService("default", "test-service",
-		map[string]string{config.FilterAnnotation: "http:8080"},
+		map[string]string{config.FilterAnnotation: "8080:http"},
 		[]corev1.ServicePort{{Name: "http", Port: 80, Protocol: corev1.ProtocolTCP}},
 		"192.168.1.100")
 
@@ -91,7 +91,7 @@ func TestReconcile_ServiceUpdate_PortChange(t *testing.T) {
 
 	// Update service with new port
 	updatedService := initialService.DeepCopy()
-	updatedService.Annotations[config.FilterAnnotation] = "http:8081"
+	updatedService.Annotations[config.FilterAnnotation] = "8081:http"
 
 	// Update in fake client
 	err = env.UpdateService(ctx, updatedService)
@@ -128,7 +128,7 @@ func TestReconcile_ServiceDeletion(t *testing.T) {
 
 	// Create service with annotation
 	service := env.CreateTestService("default", "test-service",
-		map[string]string{config.FilterAnnotation: "http:8080"},
+		map[string]string{config.FilterAnnotation: "8080:http"},
 		[]corev1.ServicePort{{Name: "http", Port: 80, Protocol: corev1.ProtocolTCP}},
 		"192.168.1.100")
 
@@ -177,7 +177,7 @@ func TestReconcile_NonLoadBalancer_Ignored(t *testing.T) {
 
 	// Create ClusterIP service (should be ignored)
 	service := env.CreateTestService("default", "clusterip-service",
-		map[string]string{config.FilterAnnotation: "http:8080"},
+		map[string]string{config.FilterAnnotation: "8080:http"},
 		[]corev1.ServicePort{{Name: "http", Port: 80, Protocol: corev1.ProtocolTCP}},
 		"192.168.1.100")
 
@@ -244,7 +244,7 @@ func TestReconcile_NoLBIP_Ignored(t *testing.T) {
 
 	// Create LoadBalancer service without IP
 	service := env.CreateTestService("default", "no-ip-service",
-		map[string]string{config.FilterAnnotation: "http:8080"},
+		map[string]string{config.FilterAnnotation: "8080:http"},
 		[]corev1.ServicePort{{Name: "http", Port: 80, Protocol: corev1.ProtocolTCP}},
 		"") // no IP
 
@@ -279,7 +279,7 @@ func TestReconcile_FailedCleanup_ServiceDeletion(t *testing.T) {
 
 	// Create a service with port forwarding
 	service := env.CreateTestService("default", "cleanup-test",
-		map[string]string{config.FilterAnnotation: "http:8080"},
+		map[string]string{config.FilterAnnotation: "8080:http"},
 		[]corev1.ServicePort{{Name: "http", Port: 80, Protocol: corev1.ProtocolTCP}},
 		"192.168.1.100")
 
@@ -355,7 +355,7 @@ func TestReconcile_RetryLogic_FailedOperations(t *testing.T) {
 
 	// Create a service
 	service := env.CreateTestService("default", "retry-test",
-		map[string]string{config.FilterAnnotation: "http:8080"},
+		map[string]string{config.FilterAnnotation: "8080:http"},
 		[]corev1.ServicePort{{Name: "http", Port: 80, Protocol: corev1.ProtocolTCP}},
 		"192.168.1.100")
 
@@ -414,14 +414,14 @@ func TestReconcile_PartialFailure_Scenarios(t *testing.T) {
 		{
 			name:        "partial-service-1",
 			namespace:   "default",
-			annotations: map[string]string{config.FilterAnnotation: "http:8080"},
+			annotations: map[string]string{config.FilterAnnotation: "8080:http"},
 			ports:       []corev1.ServicePort{{Name: "http", Port: 80, Protocol: corev1.ProtocolTCP}},
 			lbIP:        "192.168.1.100",
 		},
 		{
 			name:        "partial-service-2",
 			namespace:   "default",
-			annotations: map[string]string{config.FilterAnnotation: "https:8081"},
+			annotations: map[string]string{config.FilterAnnotation: "8081:https"},
 			ports:       []corev1.ServicePort{{Name: "https", Port: 443, Protocol: corev1.ProtocolTCP}},
 			lbIP:        "192.168.1.101",
 		},
@@ -480,7 +480,7 @@ func TestReconcile_RouterCommunication_Failures(t *testing.T) {
 
 	// Create a service
 	service := env.CreateTestService("default", "comm-test",
-		map[string]string{config.FilterAnnotation: "http:8080"},
+		map[string]string{config.FilterAnnotation: "8080:http"},
 		[]corev1.ServicePort{{Name: "http", Port: 80, Protocol: corev1.ProtocolTCP}},
 		"192.168.1.100")
 
@@ -506,7 +506,7 @@ func TestReconcile_RouterCommunication_Failures(t *testing.T) {
 
 	// Test 2: AddPort failure (create new service to test creation)
 	newService := env.CreateTestService("default", "comm-test-2",
-		map[string]string{config.FilterAnnotation: "http:8081"},
+		map[string]string{config.FilterAnnotation: "8081:http"},
 		[]corev1.ServicePort{{Name: "http", Port: 80, Protocol: corev1.ProtocolTCP}},
 		"192.168.1.101")
 
@@ -528,14 +528,10 @@ func TestReconcile_RouterCommunication_Failures(t *testing.T) {
 		t.Logf("All operation counts: %v", ops)
 	}
 
-	// Test 3: UpdatePort failure - temporarily simplified test
-	// TODO: This test needs a proper implementation but for now we'll skip it
-	// to focus on getting other tests passing
-	// Test 3: UpdatePort failure - temporarily skipped
 	// Test 3: UpdatePort failure - create proper update scenario
 	// First create a service that will be updated
 	updateTestService := env.CreateTestService("default", "update-test",
-		map[string]string{config.FilterAnnotation: "http:8083"},
+		map[string]string{config.FilterAnnotation: "8083:http"},
 		[]corev1.ServicePort{{Name: "http", Port: 80, Protocol: corev1.ProtocolTCP}},
 		"192.168.1.200")
 
@@ -597,7 +593,7 @@ func TestReconcile_RouterCommunication_Failures(t *testing.T) {
 
 	// Test 4: RemovePort failure (delete service to trigger removal)
 	deleteService := env.CreateTestService("default", "comm-test-delete",
-		map[string]string{config.FilterAnnotation: "http:8084"},
+		map[string]string{config.FilterAnnotation: "8084:http"},
 		[]corev1.ServicePort{{Name: "http", Port: 80, Protocol: corev1.ProtocolTCP}},
 		"192.168.1.210")
 
@@ -644,7 +640,7 @@ func TestReconcile_SimpleErrorScenario(t *testing.T) {
 
 	// Create a service
 	service := env.CreateTestService("default", "simple-error",
-		map[string]string{config.FilterAnnotation: "http:8080"},
+		map[string]string{config.FilterAnnotation: "8080:http"},
 		[]corev1.ServicePort{{Name: "http", Port: 80, Protocol: corev1.ProtocolTCP}},
 		"192.168.1.100")
 
@@ -690,12 +686,12 @@ func TestReconcile_SimpleMultipleServices(t *testing.T) {
 
 	// Create simple multiple services
 	service1 := env.CreateTestService("default", "simple-service-1",
-		map[string]string{config.FilterAnnotation: "http:9010"},
+		map[string]string{config.FilterAnnotation: "9010:http"},
 		[]corev1.ServicePort{{Name: "http", Port: 80, Protocol: corev1.ProtocolTCP}},
 		"192.168.1.10")
 
 	service2 := env.CreateTestService("default", "simple-service-2",
-		map[string]string{config.FilterAnnotation: "http:9011"},
+		map[string]string{config.FilterAnnotation: "9011:http"},
 		[]corev1.ServicePort{{Name: "http", Port: 80, Protocol: corev1.ProtocolTCP}},
 		"192.168.1.11")
 
@@ -732,7 +728,7 @@ func TestReconcile_ServiceRename_CleanupAndCreation(t *testing.T) {
 
 	// Create initial service with port forwarding annotation
 	oldService := env.CreateTestService("default", "old-service",
-		map[string]string{config.FilterAnnotation: "http:8080"},
+		map[string]string{config.FilterAnnotation: "8080:http"},
 		[]corev1.ServicePort{{Name: "http", Port: 80, Protocol: corev1.ProtocolTCP}},
 		"192.168.1.100")
 
@@ -749,7 +745,7 @@ func TestReconcile_ServiceRename_CleanupAndCreation(t *testing.T) {
 
 	// Simulate service rename by creating new service and deleting old one
 	newService := env.CreateTestService("default", "new-service",
-		map[string]string{config.FilterAnnotation: "http:8080"},
+		map[string]string{config.FilterAnnotation: "8080:http"},
 		[]corev1.ServicePort{{Name: "http", Port: 80, Protocol: corev1.ProtocolTCP}},
 		"192.168.1.100") // Same IP
 
@@ -798,7 +794,7 @@ func TestReconcile_ServiceRename_IPChange(t *testing.T) {
 
 	// Create initial service
 	oldService := env.CreateTestService("default", "database-service",
-		map[string]string{config.FilterAnnotation: "mysql:3306"},
+		map[string]string{config.FilterAnnotation: "3306:mysql"},
 		[]corev1.ServicePort{{Name: "mysql", Port: 3306, Protocol: corev1.ProtocolTCP}},
 		"192.168.1.50")
 
@@ -815,7 +811,7 @@ func TestReconcile_ServiceRename_IPChange(t *testing.T) {
 
 	// Rename service to new name with different IP
 	newService := env.CreateTestService("default", "new-database",
-		map[string]string{config.FilterAnnotation: "mysql:3306"},
+		map[string]string{config.FilterAnnotation: "3306:mysql"},
 		[]corev1.ServicePort{{Name: "mysql", Port: 3306, Protocol: corev1.ProtocolTCP}},
 		"192.168.1.60") // Different IP
 
@@ -864,7 +860,7 @@ func TestReconcile_ServiceRename_AnnotationChange(t *testing.T) {
 
 	// Create initial service with single port
 	oldService := env.CreateTestService("default", "web-service",
-		map[string]string{config.FilterAnnotation: "http:8080"},
+		map[string]string{config.FilterAnnotation: "8080:http"},
 		[]corev1.ServicePort{{Name: "http", Port: 80, Protocol: corev1.ProtocolTCP}},
 		"192.168.1.100")
 
@@ -881,7 +877,7 @@ func TestReconcile_ServiceRename_AnnotationChange(t *testing.T) {
 
 	// Create new service with multiple port annotations
 	newService := env.CreateTestService("default", "frontend-service",
-		map[string]string{config.FilterAnnotation: "http:8080,https:8443"},
+		map[string]string{config.FilterAnnotation: "8080:http,8443:https"},
 		[]corev1.ServicePort{
 			{Name: "http", Port: 80, Protocol: corev1.ProtocolTCP},
 			{Name: "https", Port: 443, Protocol: corev1.ProtocolTCP},
@@ -929,12 +925,12 @@ func TestReconcile_ServiceRename_NameConflict(t *testing.T) {
 
 	// Create two existing services
 	service1 := env.CreateTestService("default", "app-v1",
-		map[string]string{config.FilterAnnotation: "http:8080"},
+		map[string]string{config.FilterAnnotation: "8080:http"},
 		[]corev1.ServicePort{{Name: "http", Port: 80, Protocol: corev1.ProtocolTCP}},
 		"192.168.1.100")
 
 	service2 := env.CreateTestService("default", "app-v2",
-		map[string]string{config.FilterAnnotation: "http:8081"},
+		map[string]string{config.FilterAnnotation: "8081:http"},
 		[]corev1.ServicePort{{Name: "http", Port: 80, Protocol: corev1.ProtocolTCP}},
 		"192.168.1.101")
 
@@ -964,7 +960,7 @@ func TestReconcile_ServiceRename_NameConflict(t *testing.T) {
 
 	// Create new service with name that would conflict with existing one
 	conflictService := env.CreateTestService("default", "app",
-		map[string]string{config.FilterAnnotation: "http:8082"},
+		map[string]string{config.FilterAnnotation: "8082:http"},
 		[]corev1.ServicePort{{Name: "http", Port: 80, Protocol: corev1.ProtocolTCP}},
 		"192.168.1.102")
 
@@ -1018,12 +1014,12 @@ func TestReconcile_SimilarServiceNames_NoInterference(t *testing.T) {
 	// Create two services with similar names: test-service and test
 	// This tests the substring bug scenario
 	longService := env.CreateTestService("default", "test-service",
-		map[string]string{config.FilterAnnotation: "http:8080"},
+		map[string]string{config.FilterAnnotation: "8080:http"},
 		[]corev1.ServicePort{{Name: "http", Port: 80, Protocol: corev1.ProtocolTCP}},
 		"192.168.1.100")
 
 	shortService := env.CreateTestService("default", "test",
-		map[string]string{config.FilterAnnotation: "https:8443"},
+		map[string]string{config.FilterAnnotation: "8443:https"},
 		[]corev1.ServicePort{{Name: "https", Port: 443, Protocol: corev1.ProtocolTCP}},
 		"192.168.1.101")
 
@@ -1070,12 +1066,12 @@ func TestReconcile_SubstringServiceNames_CorrectMatching(t *testing.T) {
 
 	// Create services with substring names: api-service and api
 	apiService := env.CreateTestService("default", "api-service",
-		map[string]string{config.FilterAnnotation: "http:8080"},
+		map[string]string{config.FilterAnnotation: "8080:http"},
 		[]corev1.ServicePort{{Name: "http", Port: 80, Protocol: corev1.ProtocolTCP}},
 		"192.168.1.200")
 
 	shortApiService := env.CreateTestService("default", "api",
-		map[string]string{config.FilterAnnotation: "http:8081"},
+		map[string]string{config.FilterAnnotation: "8081:http"},
 		[]corev1.ServicePort{{Name: "http", Port: 80, Protocol: corev1.ProtocolTCP}},
 		"192.168.1.201")
 
@@ -1131,12 +1127,12 @@ func TestReconcile_DeleteService_OtherUnaffected(t *testing.T) {
 
 	// Create services with similar names: webapp and web
 	webappService := env.CreateTestService("default", "webapp",
-		map[string]string{config.FilterAnnotation: "http:8080"},
+		map[string]string{config.FilterAnnotation: "8080:http"},
 		[]corev1.ServicePort{{Name: "http", Port: 80, Protocol: corev1.ProtocolTCP}},
 		"192.168.1.150")
 
 	webService := env.CreateTestService("default", "web",
-		map[string]string{config.FilterAnnotation: "https:8081"},
+		map[string]string{config.FilterAnnotation: "8081:https"},
 		[]corev1.ServicePort{{Name: "https", Port: 443, Protocol: corev1.ProtocolTCP}},
 		"192.168.1.151")
 
@@ -1199,21 +1195,21 @@ func TestReconcile_ComplexPrefixScenarios(t *testing.T) {
 		{
 			name:        "frontend-v1",
 			namespace:   "default",
-			annotations: map[string]string{config.FilterAnnotation: "http:8080"},
+			annotations: map[string]string{config.FilterAnnotation: "8080:http"},
 			ports:       []corev1.ServicePort{{Name: "http", Port: 80, Protocol: corev1.ProtocolTCP}},
 			lbIP:        "192.168.1.100",
 		},
 		{
 			name:        "frontend",
 			namespace:   "default",
-			annotations: map[string]string{config.FilterAnnotation: "http:8082"},
+			annotations: map[string]string{config.FilterAnnotation: "8082:http"},
 			ports:       []corev1.ServicePort{{Name: "http", Port: 80, Protocol: corev1.ProtocolTCP}},
 			lbIP:        "192.168.1.101",
 		},
 		{
 			name:        "frontend-v2",
 			namespace:   "default",
-			annotations: map[string]string{config.FilterAnnotation: "https:8444"},
+			annotations: map[string]string{config.FilterAnnotation: "8444:https"},
 			ports:       []corev1.ServicePort{{Name: "https", Port: 443, Protocol: corev1.ProtocolTCP}},
 			lbIP:        "192.168.1.102",
 		},

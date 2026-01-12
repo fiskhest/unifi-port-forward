@@ -1,5 +1,5 @@
 ###
-### Creates a single rule `namespace/web-service:http` that forwards the WAN port 80 to service port 8080
+### Creates a single rule `namespace/web-service:http` that forwards the WAN port 80 to service port named "http"
 ###
 ---
 apiVersion: v1
@@ -7,7 +7,7 @@ kind: Service
 metadata:
   name: web-service
   annotations:
-    unifi-port-forwarder/ports: "http:80"
+    unifi-port-forwarder/ports: "80:http"
 spec:
   selector:
     app: web-service
@@ -17,7 +17,7 @@ spec:
       targetPort: 80
   type: LoadBalancer
 ###
-### Creates a single rule `namespace/web-service:web` that forwards the WAN port 3000 to service port 3000
+### Creates a single rule `namespace/web-service:http` that forwards the WAN port 3000 to service port named "http" (uses same port)
 ###
 ---
 apiVersion: v1

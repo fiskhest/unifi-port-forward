@@ -38,8 +38,8 @@ func TestChangeDetection_AnnotationChange(t *testing.T) {
 	// Test annotation change detection logic
 	changeContext := &ChangeContext{
 		AnnotationChanged: true,
-		OldAnnotation:     "http:8080",
-		NewAnnotation:     "http:8080,https:8443",
+		OldAnnotation:     "8080:http",
+		NewAnnotation:     "8080:http,8443:https",
 		ServiceKey:        "default/test-service",
 		ServiceNamespace:  "default",
 		ServiceName:       "test-service",
@@ -123,7 +123,7 @@ func TestChangeContextSerializationFormat(t *testing.T) {
 		OldIP:             "192.168.1.100",
 		NewIP:             "192.168.1.101",
 		AnnotationChanged: false,
-		OldAnnotation:     "http:80",
+		OldAnnotation:     "80:http",
 		NewAnnotation:     "http:81",
 		SpecChanged:       true,
 		ServiceKey:        "test-namespace/test-service",
@@ -239,7 +239,7 @@ func TestChangeContextWithPortForwardRules(t *testing.T) {
 		OldIP:             "192.168.1.100",
 		NewIP:             "192.168.1.101",
 		AnnotationChanged: false,
-		OldAnnotation:     "http:80",
+		OldAnnotation:     "80:http",
 		NewAnnotation:     "http:81",
 		SpecChanged:       true,
 		ServiceKey:        "test-namespace/test-service",

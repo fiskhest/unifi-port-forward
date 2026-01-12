@@ -95,7 +95,7 @@ func GetLBIP(service *v1.Service) string {
 	return ""
 }
 
-// parsePortMappingAnnotation parses port mapping annotation like "http:1234,https:8443"
+// parsePortMappingAnnotation parses port mapping annotation like "1234:http,8443:https"
 func parsePortMappingAnnotation(annotation string) ([]PortMapping, error) {
 	if annotation == "" {
 		return nil, nil
@@ -121,7 +121,7 @@ func parsePortMappingAnnotation(annotation string) ([]PortMapping, error) {
 	return mappings, nil
 }
 
-// parseSingleMapping parses individual port mapping like "http:1234" or "https"
+// parseSingleMapping parses individual port mapping like "1234:http" or "https"
 func parseSingleMapping(mapping string) (PortMapping, error) {
 	parts := strings.Split(mapping, ":")
 
@@ -134,23 +134,23 @@ func parseSingleMapping(mapping string) (PortMapping, error) {
 		}, nil
 
 	case 2:
-		// Custom mapping: "http:1234"
-		externalPort, err := strconv.Atoi(parts[1])
+		// Custom mapping: "1234:http" (externalPort:serviceName)
+		externalPort, err := strconv.Atoi(parts[0])
 		if err != nil {
-			return PortMapping{}, fmt.Errorf("invalid external port '%s' in mapping '%s' - must be a number between 1-65535. Valid format: 'portname:externalport' or 'portname'. Example: 'http:8080,https:8443'", parts[1], mapping)
+			return PortMapping{}, fmt.Errorf("invalid external port '%s' in mapping '%s' - must be a number between 1-65535. Valid format: 'externalPort:portname' or 'portname'. Example: '8080:http,8443:https'", parts[0], mapping)
 		}
 
 		if externalPort < 1 || externalPort > 65535 {
-			return PortMapping{}, fmt.Errorf("external port %d out of valid range (1-65535) in mapping '%s'. Valid format: 'portname:externalport' or 'portname'. Example: 'http:8080,https:8443'", externalPort, mapping)
+			return PortMapping{}, fmt.Errorf("external port %d out of valid range (1-65535) in mapping '%s'. Valid format: 'externalPort:portname' or 'portname'. Example: '8080:http,8443:https'", externalPort, mapping)
 		}
 
 		return PortMapping{
-			PortName:     parts[0],
+			PortName:     parts[1],
 			ExternalPort: externalPort,
 		}, nil
 
 	default:
-		return PortMapping{}, fmt.Errorf("invalid mapping format: too many colons in '%s'. Valid format: 'portname:externalport' or 'portname'. Example: 'http:8080,https:8443'", mapping)
+		return PortMapping{}, fmt.Errorf("invalid mapping format: too many colons in '%s'. Valid format: 'externalPort:portname' or 'portname'. Example: '8080:http,8443:https'", mapping)
 	}
 }
 
@@ -170,7 +170,7 @@ func validatePortMappings(service *v1.Service, mappings []PortMapping) error {
 
 	for _, mapping := range mappings {
 		if !servicePortNames[mapping.PortName] {
-			return fmt.Errorf("port mapping references non-existent port '%s' in service %s/%s - available ports: %s. Valid format: 'portname:externalport' or 'portname'. Example: 'http:8080,https:8443'",
+			return fmt.Errorf("port mapping references non-existent port '%s' in service %s/%s - available ports: %s. Valid format: 'externalPort:portname' or 'portname'. Example: '8080:http,8443:https'",
 				mapping.PortName, service.Namespace, service.Name, strings.Join(availablePorts, ", "))
 		}
 	}
@@ -272,7 +272,7 @@ func GetPortConfigs(service *v1.Service, lbIP string, annotationKey string) ([]r
 		}
 
 		annotation := service.Annotations[annotationKey]
-		return nil, fmt.Errorf("no valid port configurations generated from annotation '%s' for service %s/%s. Available ports: %s. Valid format: 'portname:externalport' or 'portname'. Example: '%s:8080'",
+		return nil, fmt.Errorf("no valid port configurations generated from annotation '%s' for service %s/%s. Available ports: %s. Valid format: 'externalPort:portname' or 'portname'. Example: '8080:%s'",
 			annotation, service.Namespace, service.Name, strings.Join(availablePorts, ", "), service.Spec.Ports[0].Name)
 	}
 

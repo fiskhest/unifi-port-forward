@@ -10,13 +10,13 @@ Creates a port forward rule for the servicePort named http using its Port as bot
 #### Mixed Mapping
 ```yaml
 # Some custom, some with 1:1
-unifi-port-forwarder/ports: "http:8080,https,metrics:9090"
+unifi-port-forwarder/ports: "8080:http,443:https,9090:metrics"
 ```
 
 #### Defined mapping
 ```yaml
 # Some custom, some with 1:1
-unifi-port-forwarder/ports: "http:8080"
+unifi-port-forwarder/ports: "8080:http"
 ```
 Creates a port forward rule for WAN port 8080 going to the servicePort named http as LAN (forwarded) port. Comma separate for more than one port.
 

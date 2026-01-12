@@ -24,7 +24,7 @@ func TestMultiPortService_ValidAnnotation(t *testing.T) {
 			{Name: "metrics", Port: 9090, Protocol: v1.ProtocolTCP},
 		},
 		"192.168.1.100",
-		"http:8080,https:8443,metrics:9090",
+		"8080:http,8443:https,9090:metrics",
 	)
 
 	// Test getPortConfigs function
@@ -118,7 +118,7 @@ func TestPortNameNotFound_Error(t *testing.T) {
 			{Name: "http", Port: 80, Protocol: v1.ProtocolTCP},
 		},
 		"192.168.1.100",
-		"nonexistent:8080",
+		"8080:nonexistent",
 	)
 
 	// Test getPortConfigs function - should return error
@@ -146,7 +146,7 @@ func TestPortConflictDetection_Error(t *testing.T) {
 			{Name: "http", Port: 80, Protocol: v1.ProtocolTCP},
 		},
 		"192.168.1.100",
-		"http:8080",
+		"8080:http",
 	)
 
 	// First service should succeed
@@ -164,7 +164,7 @@ func TestPortConflictDetection_Error(t *testing.T) {
 			{Name: "web", Port: 8080, Protocol: v1.ProtocolTCP},
 		},
 		"192.168.1.101",
-		"web:8080", // Same external port as service1
+		"8080:web", // Same external port as service1
 	)
 
 	// Second service should fail due to port conflict

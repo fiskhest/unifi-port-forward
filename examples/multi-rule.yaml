@@ -1,11 +1,11 @@
 ###
-### Creates multiple ports that forwards WAN to <service/LAN?> port
+### Creates multiple ports that forwards WAN to service port
 ### - `namespace/multi-service:http`
-###   - WAN: 80 LAN: 3000
+###   - WAN: 80 to service port "http" (service port 3000)
 ### - `namespace/multi-service:https`
-###   - WAN: 443 LAN: 443
+###   - WAN: 443 to service port "https" (service port 443)
 ### - `namespace/multi-service:metrics`
-###   - WAN: 9090 LAN: 9191
+###   - WAN: 9090 to service port "metrics" (service port 9191)
 ###
 ---
 apiVersion: v1
@@ -13,7 +13,7 @@ kind: Service
 metadata:
   name: multi-service
   annotations:
-    unifi-port-forwarder/ports: "http:80,https,metrics:9090"
+    unifi-port-forwarder/ports: "80:http,443:https,9090:metrics"
 spec:
   selector:
     app: multi-service

@@ -19,7 +19,7 @@ func TestDriftDetector_AnalyzeAllServicesDrift(t *testing.T) {
 	// Create a service with perfectly matching router rules
 	services := []*corev1.Service{
 		createTestServiceWithLB("default", "perfect-service", map[string]string{
-			"unifi-port-forwarder/ports": "http:8080",
+			"unifi-port-forwarder/ports": "8080:http",
 		}, "192.168.1.100"),
 	}
 
@@ -74,7 +74,7 @@ func TestDriftDetector_AggressiveOwnership(t *testing.T) {
 	// Create a service
 	services := []*corev1.Service{
 		createTestServiceWithLB("default", "my-service", map[string]string{
-			"unifi-port-forwarder/ports": "http:8080",
+			"unifi-port-forwarder/ports": "8080:http",
 		}, "192.168.1.100"),
 	}
 
@@ -137,7 +137,7 @@ func TestDriftDetector_MixedScenarios(t *testing.T) {
 			name: "missing rule scenario",
 			services: []*corev1.Service{
 				createTestServiceWithLB("default", "test1", map[string]string{
-					"unifi-port-forwarder/ports": "http:8080",
+					"unifi-port-forwarder/ports": "8080:http",
 				}, "192.168.1.100"),
 			},
 			routerRules: []*unifi.PortForward{
@@ -149,7 +149,7 @@ func TestDriftDetector_MixedScenarios(t *testing.T) {
 			name: "extra rule scenario - duplicate port mapping",
 			services: []*corev1.Service{
 				createTestServiceWithLB("default", "test1", map[string]string{
-					"unifi-port-forwarder/ports": "http:8080",
+					"unifi-port-forwarder/ports": "8080:http",
 				}, "192.168.1.100"),
 			},
 			routerRules: []*unifi.PortForward{
@@ -176,7 +176,7 @@ func TestDriftDetector_MixedScenarios(t *testing.T) {
 			name: "no router rules scenario",
 			services: []*corev1.Service{
 				createTestServiceWithLB("default", "test1", map[string]string{
-					"unifi-port-forwarder/ports": "http:8080",
+					"unifi-port-forwarder/ports": "8080:http",
 				}, "192.168.1.100"),
 			},
 			routerRules: []*unifi.PortForward{
@@ -188,7 +188,7 @@ func TestDriftDetector_MixedScenarios(t *testing.T) {
 			name: "extra rule scenario - identical duplicate",
 			services: []*corev1.Service{
 				createTestServiceWithLB("default", "test1", map[string]string{
-					"unifi-port-forwarder/ports": "http:8080",
+					"unifi-port-forwarder/ports": "8080:http",
 				}, "192.168.1.100"),
 			},
 			routerRules: []*unifi.PortForward{
@@ -215,7 +215,7 @@ func TestDriftDetector_MixedScenarios(t *testing.T) {
 			name: "correct port mapping scenario",
 			services: []*corev1.Service{
 				createTestServiceWithLB("default", "test1", map[string]string{
-					"unifi-port-forwarder/ports": "80:8080",
+					"unifi-port-forwarder/ports": "8080:80",
 				}, "192.168.1.100"),
 			},
 			routerRules: []*unifi.PortForward{
@@ -239,10 +239,10 @@ func TestDriftDetector_MixedScenarios(t *testing.T) {
 			expectedDrift: map[string]bool{"default/test1": true},
 		},
 		{
-			name: "no drift scenario with 80:8080 mapping",
+			name: "no drift scenario with 8080:80 mapping",
 			services: []*corev1.Service{
 				createTestServiceWithLB("default", "test1", map[string]string{
-					"unifi-port-forwarder/ports": "80:8080",
+					"unifi-port-forwarder/ports": "8080:80",
 				}, "192.168.1.100"),
 			},
 			routerRules: []*unifi.PortForward{
@@ -316,54 +316,54 @@ func createTestServiceWithLB(namespace, name string, annotations map[string]stri
 			parts := strings.Split(mapping, ":")
 			var portName string
 
-			if len(parts) >= 1 {
+			// New format: externalPort:serviceName or just serviceName
+			if len(parts) == 1 {
+				// Single port name: "http" -> use service port as external port
 				portName = parts[0]
+			} else if len(parts) == 2 {
+				// External port mapping: "8080:http" -> port name is "http"
+				portName = parts[1]
+			} else {
+				continue
+			}
 
-				switch portName {
-				case "80":
-					// Create port named "80" for mapping "80:8080"
+			switch portName {
+			case "http":
+				// Create port named "http" with port 8080
+				servicePorts = append(servicePorts, corev1.ServicePort{
+					Name:     "http",
+					Port:     8080,
+					Protocol: corev1.ProtocolTCP,
+				})
+			case "https":
+				// Create port named "https" with port 443
+				servicePorts = append(servicePorts, corev1.ServicePort{
+					Name:     "https",
+					Port:     443,
+					Protocol: corev1.ProtocolTCP,
+				})
+			case "80":
+				// Create port named "80" with port 8080
+				servicePorts = append(servicePorts, corev1.ServicePort{
+					Name:     "80",
+					Port:     8080,
+					Protocol: corev1.ProtocolTCP,
+				})
+			case "3306":
+				// Create port named "3306" with port 3306
+				servicePorts = append(servicePorts, corev1.ServicePort{
+					Name:     "3306",
+					Port:     3306,
+					Protocol: corev1.ProtocolTCP,
+				})
+			default:
+				// For any other port name, use name as port number if it's numeric
+				if portNum, err := strconv.Atoi(portName); err == nil {
 					servicePorts = append(servicePorts, corev1.ServicePort{
-						Name:     "80",
-						Port:     80,
+						Name:     portName,
+						Port:     int32(portNum),
 						Protocol: corev1.ProtocolTCP,
 					})
-				case "443":
-					// Create port named "443" for mapping "443:8443"
-					servicePorts = append(servicePorts, corev1.ServicePort{
-						Name:     "443",
-						Port:     443,
-						Protocol: corev1.ProtocolTCP,
-					})
-				case "3306":
-					// Create port named "3306" for mapping "3306:3306"
-					servicePorts = append(servicePorts, corev1.ServicePort{
-						Name:     "3306",
-						Port:     3306,
-						Protocol: corev1.ProtocolTCP,
-					})
-				case "http":
-					// Create port named "http" with port 80
-					servicePorts = append(servicePorts, corev1.ServicePort{
-						Name:     "http",
-						Port:     80,
-						Protocol: corev1.ProtocolTCP,
-					})
-				case "https":
-					// Create port named "https" with port 443
-					servicePorts = append(servicePorts, corev1.ServicePort{
-						Name:     "https",
-						Port:     443,
-						Protocol: corev1.ProtocolTCP,
-					})
-				default:
-					// For any other port name, use the name as port number if it's numeric
-					if portNum, err := strconv.Atoi(portName); err == nil {
-						servicePorts = append(servicePorts, corev1.ServicePort{
-							Name:     portName,
-							Port:     int32(portNum),
-							Protocol: corev1.ProtocolTCP,
-						})
-					}
 				}
 			}
 		}

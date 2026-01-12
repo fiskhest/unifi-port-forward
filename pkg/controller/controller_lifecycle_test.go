@@ -6,8 +6,8 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"unifi-port-forwarder/pkg/config"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"unifi-port-forwarder/pkg/config"
 )
 
 // TestController_Startup_PreAnnotatedService tests controller startup scenario
@@ -20,7 +20,7 @@ func TestController_Startup_PreAnnotatedService(t *testing.T) {
 
 	// Create a service with annotation before controller "starts"
 	preAnnotatedService := env.CreateTestService("default", "pre-annotated",
-		map[string]string{config.FilterAnnotation: "http:8085"},
+		map[string]string{config.FilterAnnotation: "8085:http"},
 		[]corev1.ServicePort{{Name: "http", Port: 80, Protocol: corev1.ProtocolTCP}},
 		"192.168.1.100")
 
@@ -64,14 +64,14 @@ func TestController_Startup_MultiplePreAnnotatedServices(t *testing.T) {
 		{
 			name:        "database",
 			namespace:   "default",
-			annotations: map[string]string{config.FilterAnnotation: "mysql:3306"},
+			annotations: map[string]string{config.FilterAnnotation: "3306:mysql"},
 			ports:       []corev1.ServicePort{{Name: "mysql", Port: 3306, Protocol: corev1.ProtocolTCP}},
 			lbIP:        "192.168.1.50",
 		},
 		{
 			name:        "webapp",
 			namespace:   "default",
-			annotations: map[string]string{config.FilterAnnotation: "http:8081,https:8443"},
+			annotations: map[string]string{config.FilterAnnotation: "8081:http,8443:https"},
 			ports: []corev1.ServicePort{
 				{Name: "http", Port: 80, Protocol: corev1.ProtocolTCP},
 				{Name: "https", Port: 443, Protocol: corev1.ProtocolTCP},
@@ -81,7 +81,7 @@ func TestController_Startup_MultiplePreAnnotatedServices(t *testing.T) {
 		{
 			name:        "cache",
 			namespace:   "default",
-			annotations: map[string]string{config.FilterAnnotation: "redis:6379"},
+			annotations: map[string]string{config.FilterAnnotation: "6379:redis"},
 			ports:       []corev1.ServicePort{{Name: "redis", Port: 6379, Protocol: corev1.ProtocolTCP}},
 			lbIP:        "192.168.1.70",
 		},
@@ -147,21 +147,21 @@ func TestController_Removal_AllRulesCleanup(t *testing.T) {
 		{
 			name:        "service-a",
 			namespace:   "default",
-			annotations: map[string]string{config.FilterAnnotation: "http:8082"},
+			annotations: map[string]string{config.FilterAnnotation: "8082:http"},
 			ports:       []corev1.ServicePort{{Name: "http", Port: 80, Protocol: corev1.ProtocolTCP}},
 			lbIP:        "192.168.1.10",
 		},
 		{
 			name:        "service-b",
 			namespace:   "production",
-			annotations: map[string]string{config.FilterAnnotation: "https:8445"},
+			annotations: map[string]string{config.FilterAnnotation: "8445:https"},
 			ports:       []corev1.ServicePort{{Name: "https", Port: 443, Protocol: corev1.ProtocolTCP}},
 			lbIP:        "192.168.1.20",
 		},
 		{
 			name:        "service-c",
 			namespace:   "staging",
-			annotations: map[string]string{config.FilterAnnotation: "api:3000"},
+			annotations: map[string]string{config.FilterAnnotation: "3000:api"},
 			ports:       []corev1.ServicePort{{Name: "api", Port: 3000, Protocol: corev1.ProtocolTCP}},
 			lbIP:        "192.168.1.30",
 		},
@@ -239,14 +239,14 @@ func TestController_Restart_ExistingRules(t *testing.T) {
 		{
 			name:        "persistent-service",
 			namespace:   "default",
-			annotations: map[string]string{config.FilterAnnotation: "http:8083"},
+			annotations: map[string]string{config.FilterAnnotation: "8083:http"},
 			ports:       []corev1.ServicePort{{Name: "http", Port: 80, Protocol: corev1.ProtocolTCP}},
 			lbIP:        "192.168.1.101", // Updated IP
 		},
 		{
 			name:        "temp-service",
 			namespace:   "default",
-			annotations: map[string]string{config.FilterAnnotation: "https:8444"},
+			annotations: map[string]string{config.FilterAnnotation: "8444:https"},
 			ports:       []corev1.ServicePort{{Name: "https", Port: 443, Protocol: corev1.ProtocolTCP}},
 			lbIP:        "192.168.1.200",
 		},
@@ -275,7 +275,7 @@ func TestController_Restart_ExistingRules(t *testing.T) {
 	// Simulate persistent-service IP change while controller is down (external change)
 	// Update the service with new IP
 	updatedService := env.CreateTestService("default", "persistent-service",
-		map[string]string{config.FilterAnnotation: "http:8080"},
+		map[string]string{config.FilterAnnotation: "8080:http"},
 		[]corev1.ServicePort{{Name: "http", Port: 80, Protocol: corev1.ProtocolTCP}},
 		"192.168.1.101") // Changed IP
 
@@ -286,7 +286,7 @@ func TestController_Restart_ExistingRules(t *testing.T) {
 	// Simulate controller restart - reconcile only persistent-service
 	// with the original controller (which simulates restart behavior)
 	restartedService := env.CreateTestService("default", "persistent-service",
-		map[string]string{config.FilterAnnotation: "http:8080"},
+		map[string]string{config.FilterAnnotation: "8080:http"},
 		[]corev1.ServicePort{{Name: "http", Port: 80, Protocol: corev1.ProtocolTCP}},
 		"192.168.1.101") // Updated IP
 
