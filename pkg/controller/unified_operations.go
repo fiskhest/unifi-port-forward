@@ -184,10 +184,9 @@ func (r *PortForwardReconciler) executeOperations(ctx context.Context, operation
 	var completedOperations []PortOperation
 
 	if r.Config.Debug {
-		ctrllog.FromContext(ctx).Info("Executing port operations",
+		ctrllog.FromContext(ctx).V(1).Info("Executing port operations",
 			"total_operations", len(operations),
 			"ownership_takeovers", countOwnershipTakeovers(operations))
-
 	}
 
 	for _, op := range operations {
@@ -236,11 +235,11 @@ func (r *PortForwardReconciler) executeOperations(ctx context.Context, operation
 		}
 	}
 
-	logger := ctrllog.FromContext(ctx)
-	logger.Info("All operations completed successfully",
-		"created_count", len(result.Created),
-		"updated_count", len(result.Updated),
-		"deleted_count", len(result.Deleted))
+	// logger := ctrllog.FromContext(ctx)
+	// logger.Info("All operations completed successfully",
+	// 	"created_count", len(result.Created),
+	// 	"updated_count", len(result.Updated),
+	// 	"deleted_count", len(result.Deleted))
 
 	return result, nil
 }

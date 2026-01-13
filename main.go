@@ -146,7 +146,7 @@ func runController(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create reconciler
-	reconciler := &controller.PortForwardReconciler{
+	portforwardReconciler := &controller.PortForwardReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
 		Router: router,
@@ -154,7 +154,41 @@ func runController(cmd *cobra.Command, args []string) error {
 	}
 
 	// Setup controller
-	if err := reconciler.SetupWithManager(mgr); err != nil {
+	if err := portforwardReconciler.SetupWithManager(mgr); err != nil {
+		return fmt.Errorf("failed to setup controller: %w", err)
+	}
+
+	// Perform initial reconciliation sync
+	if err := portforwardReconciler.PerformInitialReconciliationSync(context.Background()); err != nil {
+		logger.Error(err, "Initial reconciliation sync failed, controller will use per-reconciliation syncs")
+		return fmt.Errorf("failed to perform initial sync: %w", err)
+	}
+	logger.Info("✅ Initial reconciliation sync completed")
+
+	// Check if PortForwardRule CRD is available
+	if helpers.IsPortForwardRuleCRDAvailable(context.Background(), mgr.GetClient()) {
+		logger.Info("PortForwardRule CRD detected, enabling PortForwardRule controller")
+
+		// Create PortForwardRule controller
+		ruleReconciler := &controller.PortForwardRuleReconciler{
+			Client:   mgr.GetClient(),
+			Scheme:   mgr.GetScheme(),
+			Router:   router,
+			Config:   &cfg,
+			Recorder: mgr.GetEventRecorderFor("portforwardrule-controller"),
+		}
+
+		// Setup PortForwardRule controller
+		if err := ruleReconciler.SetupWithManager(mgr); err != nil {
+			return fmt.Errorf("failed to setup PortForwardRule controller: %w", err)
+		}
+	} else {
+		logger.Info("PortForwardRule CRD not found, PortForwardRule controller disabled (annotation-based mode only)")
+	}
+
+	// Setup controller
+	// TODO: Fix initial sync integration after method resolution
+	if err := portforwardReconciler.SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("failed to setup controller: %w", err)
 	}
 
@@ -180,19 +214,19 @@ func runController(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create and start periodic reconciler (always on)
-	reconciler.PeriodicReconciler = controller.NewPeriodicReconciler(
+	portforwardReconciler.PeriodicReconciler = controller.NewPeriodicReconciler(
 		mgr.GetClient(),
 		mgr.GetScheme(),
 		router,
 		&cfg,
-		reconciler.EventPublisher,
-		reconciler.Recorder,
+		portforwardReconciler.EventPublisher,
+		portforwardReconciler.Recorder,
 	)
 
 	// Start periodic reconciler in background
 	go func() {
 		logger := logr.FromSlogHandler(slog.Default().Handler()).WithValues("component", "periodic-reconciler-main")
-		if err := reconciler.PeriodicReconciler.Start(context.Background()); err != nil {
+		if err := portforwardReconciler.PeriodicReconciler.Start(context.Background()); err != nil {
 			logger.Error(err, "Periodic reconciler failed")
 		}
 	}()
@@ -207,8 +241,8 @@ func runController(cmd *cobra.Command, args []string) error {
 		fmt.Println("Shutting down gracefully")
 
 		// Stop periodic reconciler
-		if reconciler.PeriodicReconciler != nil {
-			if err := reconciler.PeriodicReconciler.Stop(); err != nil {
+		if portforwardReconciler.PeriodicReconciler != nil {
+			if err := portforwardReconciler.PeriodicReconciler.Stop(); err != nil {
 				logger.Error(err, "Failed to stop periodic reconciler")
 			}
 		}

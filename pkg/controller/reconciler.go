@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"unifi-port-forwarder/pkg/config"
 	"unifi-port-forwarder/pkg/helpers"
@@ -36,6 +37,10 @@ type PortForwardReconciler struct {
 	ruleOwnerMap   map[string]string               // port -> serviceKey
 	serviceRuleMap map[string][]*unifi.PortForward // serviceKey -> rules
 
+	// Periodic refresh optimization fields
+	mapVersion    int64        // Unix timestamp of last full refresh
+	refreshTicker *time.Ticker // Periodic refresh trigger
+
 	// Always-on periodic reconciler
 	PeriodicReconciler *PeriodicReconciler
 }
@@ -46,10 +51,11 @@ type PortForwardReconciler struct {
 func (r *PortForwardReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := ctrllog.FromContext(ctx).WithValues("namespace", req.Namespace, "name", req.Name)
 
-	// 🆕 Initial state synchronization - sync router rules to internal maps
-	if err := r.syncRouterState(ctx); err != nil {
-		logger.Error(err, "Failed to sync router state on startup")
-		return ctrl.Result{}, err
+	// Check if maps need refresh (5-minute intervals or first run)
+	if r.needsMapRefresh() {
+		if err := r.refreshMaps(ctx); err != nil {
+			logger.Error(err, "Failed to refresh maps, continuing with existing")
+		}
 	}
 
 	// Fetch the Service instance
@@ -141,8 +147,6 @@ func (r *PortForwardReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 				}
 			}
 		}
-
-		return result, nil
 	}
 
 	logger.V(1).Info("No relevant changes detected")
@@ -405,7 +409,7 @@ func (r *PortForwardReconciler) performBestEffortCleanup(ctx context.Context, se
 	return nil
 }
 
-// 🆕 syncRouterState synchronizes router rules to internal maps for state tracking
+// syncRouterState synchronizes router rules to internal maps for state tracking
 func (r *PortForwardReconciler) syncRouterState(ctx context.Context) error {
 	logger := ctrllog.FromContext(ctx).WithValues("operation", "sync_router_state")
 
@@ -438,7 +442,7 @@ func (r *PortForwardReconciler) syncRouterState(ctx context.Context) error {
 	return nil
 }
 
-// 🆕 detectChanges determines what changes are needed using synchronized state
+// detectChanges determines what changes are needed using synchronized state
 func (r *PortForwardReconciler) detectChanges(ctx context.Context, service *corev1.Service, serviceKey string) *ChangeContext {
 	lbIP := helpers.GetLBIP(service)
 
@@ -466,10 +470,123 @@ func (r *PortForwardReconciler) detectChanges(ctx context.Context, service *core
 		changeContext.IsInitialSync = false
 		return changeContext
 	}
-
-	// Fall back to detailed change analysis
-	changeContext = r.analyzeDetailedChanges(currentRules, desiredConfigs, lbIP, changeContext)
 	return changeContext
+}
+
+// PerformInitialReconciliationSync performs a comprehensive one-time sync of router state
+// This replaces per-reconciliation syncs with a single startup scan
+func (r *PortForwardReconciler) PerformInitialReconciliationSync(ctx context.Context) error {
+	logger := ctrllog.FromContext(ctx).WithValues("operation", "initial_reconciliation_sync")
+
+	// Get current router rules
+	currentRules, err := r.Router.ListAllPortForwards(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to list port forwards for initial sync: %w", err)
+	}
+
+	// Clear existing maps
+	r.ruleOwnerMap = make(map[string]string)
+	r.serviceRuleMap = make(map[string][]*unifi.PortForward)
+
+	// Populate maps with current router state
+	for _, rule := range currentRules {
+		// Extract service key from rule name (format: "namespace/service-name:port-name")
+		parts := strings.SplitN(rule.Name, ":", 3)
+		if len(parts) >= 2 {
+			serviceKey := parts[0] // parts[0] is "namespace/service-name"
+			r.ruleOwnerMap[rule.DstPort] = serviceKey
+			r.serviceRuleMap[serviceKey] = append(r.serviceRuleMap[serviceKey], rule)
+		}
+	}
+
+	// Set version timestamp for refresh timing
+	r.mapVersion = time.Now().Unix()
+
+	logger.Info("✅ Initial reconciliation sync completed",
+		"total_rules", len(currentRules),
+		"service_mappings", len(r.serviceRuleMap),
+		"port_mappings", len(r.ruleOwnerMap))
+
+	return nil
+}
+
+// needsMapRefresh determines if internal maps need refreshing based on time or initialization state
+func (r *PortForwardReconciler) needsMapRefresh() bool {
+	// Refresh needed if ticker not started (first run) or 5 minutes have passed
+	return r.refreshTicker == nil ||
+		time.Since(time.Unix(r.mapVersion, 0)) > 5*time.Minute
+}
+
+// refreshMaps performs incremental updates to internal state maps
+func (r *PortForwardReconciler) refreshMaps(ctx context.Context) error {
+	logger := ctrllog.FromContext(ctx).WithValues("operation", "refresh_maps")
+
+	// Get current router state
+	currentRules, err := r.Router.ListAllPortForwards(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to list port forwards for refresh: %w", err)
+	}
+
+	// Update existing maps incrementally
+	updatedCount := r.updateMapsIncrementally(currentRules)
+
+	// Update version timestamp
+	r.mapVersion = time.Now().Unix()
+
+	logger.Info("🔄 Periodic map refresh completed",
+		"updated_mappings", updatedCount,
+		"total_rules", len(currentRules))
+
+	return nil
+}
+
+// updateMapsIncrementally updates internal maps with current router state
+func (r *PortForwardReconciler) updateMapsIncrementally(currentRules []*unifi.PortForward) int {
+	// Create temporary maps for the new state
+	newRuleOwnerMap := make(map[string]string)
+	newServiceRuleMap := make(map[string][]*unifi.PortForward)
+
+	// Populate new maps with current router state
+	for _, rule := range currentRules {
+		parts := strings.SplitN(rule.Name, ":", 3)
+		if len(parts) >= 2 {
+			serviceKey := fmt.Sprintf("%s/%s", parts[0], parts[1])
+			newRuleOwnerMap[rule.DstPort] = serviceKey
+			newServiceRuleMap[serviceKey] = append(newServiceRuleMap[serviceKey], rule)
+		}
+	}
+
+	// Calculate update count (simple count of differences)
+	updateCount := 0
+	if len(newRuleOwnerMap) != len(r.ruleOwnerMap) {
+		updateCount += len(newRuleOwnerMap) - len(r.ruleOwnerMap)
+	}
+	if len(newServiceRuleMap) != len(r.serviceRuleMap) {
+		updateCount += len(newServiceRuleMap) - len(r.serviceRuleMap)
+	}
+
+	// Replace existing maps atomically
+	r.ruleOwnerMap = newRuleOwnerMap
+	r.serviceRuleMap = newServiceRuleMap
+
+	return updateCount
+}
+
+// StartPeriodicRefresh starts a background goroutine for periodic map refresh
+func (r *PortForwardReconciler) StartPeriodicRefresh(interval time.Duration) {
+	r.refreshTicker = time.NewTicker(interval)
+	go func() {
+		for {
+			select {
+			case <-r.refreshTicker.C:
+				ctx := context.Background()
+				logger := ctrllog.FromContext(ctx).WithValues("operation", "periodic_refresh")
+				if err := r.refreshMaps(ctx); err != nil {
+					logger.Error(err, "Periodic refresh failed")
+				}
+			}
+		}
+	}()
 }
 
 // createEvent creates a Kubernetes event for the service
@@ -517,11 +634,19 @@ func (r *PortForwardReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	r.ruleOwnerMap = make(map[string]string)
 	r.serviceRuleMap = make(map[string][]*unifi.PortForward)
 
+	// Initialize map version timestamp
+	r.mapVersion = 0
+
 	// Initialize recorder
 	r.Recorder = mgr.GetEventRecorderFor("unifi-port-forwarder")
 
 	// 🆕 Initialize event publisher
 	r.EventPublisher = NewEventPublisher(r.Client, r.Recorder, r.Scheme)
+
+	// Start periodic refresh if not already running
+	if r.refreshTicker == nil {
+		r.StartPeriodicRefresh(5 * time.Minute)
+	}
 
 	// Use enhanced predicate for unified change detection
 	eventFilter := ServiceChangePredicate{}
