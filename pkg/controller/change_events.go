@@ -162,27 +162,6 @@ func (ep *EventPublisher) PublishPortForwardFailedEvent(ctx context.Context, ser
 	}
 }
 
-func (ep *EventPublisher) PublishIPChangedEvent(ctx context.Context, service *corev1.Service, changeContext *ChangeContext, oldIP, newIP string) {
-	logger := ctrllog.FromContext(ctx).WithValues("service", service.Name, "namespace", service.Namespace)
-
-	eventData := &PortForwardEventData{
-		ServiceKey:       fmt.Sprintf("%s/%s", service.Namespace, service.Name),
-		ServiceNamespace: service.Namespace,
-		ServiceName:      service.Name,
-		ExternalIP:       newIP,
-		Reason:           "IPChanged",
-		Message:          fmt.Sprintf("%s -> %s", oldIP, newIP),
-	}
-
-	message := fmt.Sprintf("Changed LoadBalancer IP: %s service: %s", eventData.Message, service.Name)
-
-	if err := ep.createEvent(ctx, service, "IPChanged", message, eventData, changeContext); err != nil {
-		logger.Error(err, "Failed to publish IPChanged event")
-	} else {
-		logger.V(1).Info("Published IPChanged event", "old_ip", oldIP, "new_ip", newIP)
-	}
-}
-
 func (ep *EventPublisher) createEvent(ctx context.Context, service *corev1.Service, eventType, message string, eventData *PortForwardEventData, changeContext *ChangeContext) error {
 	logger := ctrllog.FromContext(ctx)
 

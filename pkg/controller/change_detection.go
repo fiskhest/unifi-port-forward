@@ -27,6 +27,7 @@ type ChangeContext struct {
 	SpecChanged bool               `json:"spec_changed"`
 	PortChanges []PortChangeDetail `json:"port_changes,omitempty"`
 
+	IsInitialSync    bool     `json:"is_initial_sync,omitempty"`
 	ServiceKey       string   `json:"service_key"`
 	ServiceNamespace string   `json:"-"`                            // Not serialized, derived from ServiceKey
 	ServiceName      string   `json:"-"`                            // Not serialized, derived from ServiceKey
@@ -42,6 +43,7 @@ type ChangeContextSerializable struct {
 	OldAnnotation     string             `json:"old_annotation,omitempty"`
 	NewAnnotation     string             `json:"new_annotation,omitempty"`
 	SpecChanged       bool               `json:"spec_changed"`
+	IsInitialSync     bool               `json:"is_initial_sync,omitempty"`
 	PortChanges       []PortChangeDetail `json:"port_changes,omitempty"`
 	ServiceKey        string             `json:"service_key"`
 	PortForwardRules  []string           `json:"port_forward_rules,omitempty"` // Final rules created for this service
@@ -57,6 +59,11 @@ type PortChangeDetail struct {
 
 // HasRelevantChanges returns true if any relevant changes occurred
 func (c *ChangeContext) HasRelevantChanges() bool {
+	// Don't consider changes during initial sync
+	if c.IsInitialSync {
+		return false
+	}
+
 	return c.IPChanged || c.AnnotationChanged || c.SpecChanged
 }
 

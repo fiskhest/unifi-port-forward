@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/filipowm/go-unifi/unifi"
 	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
@@ -202,12 +203,13 @@ func (router *UnifiRouter) UpdatePort(ctx context.Context, port int, config Port
 	}
 
 	if !portExists {
-		err := fmt.Errorf("port forward rule for port %d not found - cannot update non-existent rule. Available ports may differ from expected. Consider creating rule first", port)
-		logger.Error(err, "Port forward rule not found for update",
+		// Rule doesn't exist, log clear error and return for proper handling
+		errorMsg := fmt.Sprintf("port forward rule for port %d not found", port)
+		logger.Info("Port forward rule not found for update",
 			"port", port,
-			"searched_port", port,
-			"config", config)
-		return err
+			"config_name", config.Name,
+			"error_type", "rule_not_found")
+		return fmt.Errorf(errorMsg)
 	}
 
 	logger.V(1).Info("Found existing port forward rule to update",
@@ -240,6 +242,17 @@ func (router *UnifiRouter) UpdatePort(ctx context.Context, port int, config Port
 		return retryErr
 	})
 	if err != nil {
+		// Check if this is a "not found" error and convert to create operation
+		if strings.Contains(strings.ToLower(err.Error()), "not found") {
+			logger.Info("UpdatePort API returned 'not found', converting to create operation",
+				"port", port,
+				"rule_id", pf.ID,
+				"error", err.Error())
+
+			// Create the rule instead of updating
+			return router.AddPort(ctx, config)
+		}
+
 		logger.Error(err, "Failed to update port forward rule via UniFi API",
 			"port", port,
 			"rule_id", pf.ID,

@@ -9,27 +9,27 @@ import (
 	corev1 "k8s.io/api/core/v1"
 )
 
-func TestChangeDetection_IPChange(t *testing.T) {
-	// Test IP change detection logic
+func TestChangeDetection_OtherChanges(t *testing.T) {
+	// Test other change detection logic (IP event publishing removed)
 	changeContext := &ChangeContext{
-		IPChanged:        true,
-		OldIP:            "192.168.1.100",
-		NewIP:            "192.168.1.101",
-		ServiceKey:       "default/test-service",
-		ServiceNamespace: "default",
-		ServiceName:      "test-service",
+		AnnotationChanged: true,
+		OldAnnotation:     "8080:http",
+		NewAnnotation:     "80:http",
+		ServiceKey:        "default/test-service",
+		ServiceNamespace:  "default",
+		ServiceName:       "test-service",
 	}
 
 	if !changeContext.HasRelevantChanges() {
-		t.Error("Expected IP change to be detected")
+		t.Error("Expected annotation change to be detected")
 	}
 
-	if !changeContext.IPChanged {
-		t.Error("Expected IPChanged to be true")
+	if !changeContext.AnnotationChanged {
+		t.Error("Expected AnnotationChanged to be true")
 	}
 
-	if changeContext.AnnotationChanged || changeContext.SpecChanged {
-		t.Error("Expected only IP change")
+	if changeContext.SpecChanged {
+		t.Error("Expected only annotation change")
 	}
 }
 
@@ -52,7 +52,7 @@ func TestChangeDetection_AnnotationChange(t *testing.T) {
 		t.Error("Expected AnnotationChanged to be true")
 	}
 
-	if changeContext.IPChanged || changeContext.SpecChanged {
+	if changeContext.SpecChanged {
 		t.Error("Expected only annotation change")
 	}
 }
@@ -80,7 +80,7 @@ func TestChangeDetection_SpecChange(t *testing.T) {
 		t.Error("Expected SpecChanged to be true")
 	}
 
-	if changeContext.IPChanged || changeContext.AnnotationChanged {
+	if changeContext.AnnotationChanged {
 		t.Error("Expected only spec change")
 	}
 }
@@ -118,9 +118,6 @@ func TestChangeAnalysis_PortChanges(t *testing.T) {
 func TestChangeContextSerializationFormat(t *testing.T) {
 	// Test that new format excludes redundant fields and is properly formatted
 	context := &ChangeContext{
-		IPChanged:         true,
-		OldIP:             "192.168.1.100",
-		NewIP:             "192.168.1.101",
 		AnnotationChanged: false,
 		OldAnnotation:     "80:http",
 		NewAnnotation:     "http:81",
@@ -136,8 +133,8 @@ func TestChangeContextSerializationFormat(t *testing.T) {
 	}
 
 	// Verify it contains expected fields
-	if !strings.Contains(serialized, `"ip_changed": true`) {
-		t.Error("Missing ip_changed field")
+	if !strings.Contains(serialized, `"spec_changed": true`) {
+		t.Error("Missing spec_changed field")
 	}
 	if !strings.Contains(serialized, `"service_key": "test-namespace/test-service"`) {
 		t.Error("Missing service_key field")

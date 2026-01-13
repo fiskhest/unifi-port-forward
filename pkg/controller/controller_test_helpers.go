@@ -57,7 +57,7 @@ func NewControllerTestEnv(t *testing.T) *ControllerTestEnv {
 		Client: fakeClient,
 		Router: mockRouter,
 		Scheme: scheme,
-		Config: &config.Config{Debug: false},
+		Config: &config.Config{Debug: true},
 	}
 
 	return &ControllerTestEnv{

@@ -7,7 +7,7 @@ kind: Service
 metadata:
   name: web-service
   annotations:
-    unifi-port-forwarder/ports: "80:http"
+    unifi-port-forwarder/ports: "89:http"
 spec:
   selector:
     app: web-service
@@ -23,9 +23,9 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: web-service
+  name: web-service2
   annotations:
-    unifi-port-forwarder/ports: "http"
+    unifi-port-forwarder/ports: "3001:http"
 spec:
   selector:
     app: web-service

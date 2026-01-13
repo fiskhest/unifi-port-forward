@@ -58,7 +58,7 @@ func NewPeriodicReconciler(client client.Client, scheme *runtime.Scheme, router 
 // Start begins the periodic reconciliation loop
 func (r *PeriodicReconciler) Start(ctx context.Context) error {
 	logger := ctrllog.FromContext(ctx).WithValues("component", "periodic-reconciler")
-	logger.Info("Starting periodic reconciler", "interval", r.interval.String())
+	logger.V(1).Info("Starting periodic reconciler", "interval", r.interval.String())
 
 	// Create ticker with fixed 15-minute interval
 	r.ticker = time.NewTicker(r.interval)
@@ -88,7 +88,6 @@ func (r *PeriodicReconciler) Start(ctx context.Context) error {
 // Stop gracefully shuts down the periodic reconciler
 func (r *PeriodicReconciler) Stop() error {
 	logger := ctrllog.FromContext(context.Background()).WithValues("component", "periodic-reconciler")
-	logger.Info("Stopping periodic reconciler")
 
 	// Signal stop
 	close(r.stopCh)
@@ -107,8 +106,8 @@ func (r *PeriodicReconciler) Stop() error {
 
 // performInitialReconciliation performs the first reconciliation when the controller starts
 func (r *PeriodicReconciler) performInitialReconciliation(ctx context.Context) error {
-	logger := ctrllog.FromContext(ctx).WithValues("component", "periodic-reconciler")
-	logger.Info("Performing initial reconciliation on startup")
+	// logger := ctrllog.FromContext(ctx).WithValues("component", "periodic-reconciler")
+	// logger.Info("Performing initial reconciliation on startup")
 
 	startTime := time.Now()
 	return r.performFullReconciliation(ctx, startTime)

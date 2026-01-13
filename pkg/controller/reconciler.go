@@ -10,6 +10,8 @@ import (
 	"unifi-port-forwarder/pkg/helpers"
 	"unifi-port-forwarder/pkg/routers"
 
+	"github.com/filipowm/go-unifi/unifi"
+
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -30,6 +32,10 @@ type PortForwardReconciler struct {
 	EventPublisher *EventPublisher
 	Recorder       record.EventRecorder
 
+	// Internal state synchronization maps
+	ruleOwnerMap   map[string]string               // port -> serviceKey
+	serviceRuleMap map[string][]*unifi.PortForward // serviceKey -> rules
+
 	// Always-on periodic reconciler
 	PeriodicReconciler *PeriodicReconciler
 }
@@ -39,6 +45,12 @@ type PortForwardReconciler struct {
 // Reconcile implements the reconciliation logic for Service resources
 func (r *PortForwardReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := ctrllog.FromContext(ctx).WithValues("namespace", req.Namespace, "name", req.Name)
+
+	// 🆕 Initial state synchronization - sync router rules to internal maps
+	if err := r.syncRouterState(ctx); err != nil {
+		logger.Error(err, "Failed to sync router state on startup")
+		return ctrl.Result{}, err
+	}
 
 	// Fetch the Service instance
 	service := &corev1.Service{}
@@ -96,75 +108,45 @@ func (r *PortForwardReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		return ctrl.Result{}, nil
 	}
 
-	// Get current router state to detect changes
-	currentRules, err := r.Router.ListAllPortForwards(ctx)
-	if err != nil {
-		logger.Error(err, "Failed to list current port forwards for change detection")
-		// Continue without change detection for now
+	// Create change context for this reconciliation using synchronized state
+	serviceKey := fmt.Sprintf("%s/%s", service.Namespace, service.Name)
+	changeContext := r.detectChanges(ctx, service, serviceKey)
+
+	// 🆕 Skip change detection during initial sync
+	if changeContext.IsInitialSync {
+		logger.Info("Skipping change processing during initial state synchronization")
+		changeContext.IsInitialSync = false
 	}
 
-	// Create change context for this reconciliation
-	changeContext := &ChangeContext{
-		ServiceKey:       fmt.Sprintf("%s/%s", service.Namespace, service.Name),
-		ServiceNamespace: service.Namespace,
-		ServiceName:      service.Name,
-	}
-
-	// Detect changes by comparing with current rules
-	if currentRules != nil {
-		servicePrefix := fmt.Sprintf("%s/%s:", service.Namespace, service.Name)
-		serviceIP := helpers.GetLBIP(service)
-
-		for _, rule := range currentRules {
-			if strings.HasPrefix(rule.Name, servicePrefix) {
-				// Service has existing rules, this might be an update
-				// Check if IP changed
-				if rule.DestinationIP != serviceIP {
-					changeContext.IPChanged = true
-					changeContext.OldIP = rule.DestinationIP
-					changeContext.NewIP = serviceIP
-				}
-				// Assume spec change if service has existing rules
-				changeContext.SpecChanged = true
-				break
-			}
-		}
-	}
-
-	// Log what changes we're processing
 	if changeContext.HasRelevantChanges() {
 		logger.Info("Processing service changes",
 			"ip_changed", changeContext.IPChanged,
 			"annotation_changed", changeContext.AnnotationChanged,
 			"spec_changed", changeContext.SpecChanged)
 
-		// Publish change context events
+		// Use unified change processing
+		operations, result, err := r.processAllChanges(ctx, service, changeContext)
+		if err != nil {
+			return result, err
+		}
+
+		// Publish ownership-taking events
 		if r.EventPublisher != nil {
-			if changeContext.IPChanged {
-				r.EventPublisher.PublishIPChangedEvent(ctx, service, changeContext, changeContext.OldIP, changeContext.NewIP)
+			for _, op := range operations {
+				if op.Reason == "port_conflict_take_ownership" {
+					oldRuleName := op.ExistingRule.Name
+					newRuleName := op.Config.Name
+					r.EventPublisher.PublishPortForwardTakenOwnershipEvent(ctx, service, changeContext,
+						oldRuleName, newRuleName, op.Config.DstPort, op.Config.Protocol)
+				}
 			}
 		}
+
+		return result, nil
 	}
 
-	// Use unified change processing
-	operations, result, err := r.processAllChanges(ctx, service, changeContext)
-	if err != nil {
-		return result, err
-	}
-
-	// Publish ownership-taking events
-	if r.EventPublisher != nil {
-		for _, op := range operations {
-			if op.Reason == "port_conflict_take_ownership" {
-				oldRuleName := op.ExistingRule.Name
-				newRuleName := op.Config.Name
-				r.EventPublisher.PublishPortForwardTakenOwnershipEvent(ctx, service, changeContext,
-					oldRuleName, newRuleName, op.Config.DstPort, op.Config.Protocol)
-			}
-		}
-	}
-
-	return result, nil
+	logger.V(1).Info("No relevant changes detected")
+	return ctrl.Result{}, nil
 }
 
 // handleServiceDeletion handles service deletion cleanup for services without finalizers
@@ -176,13 +158,14 @@ func (r *PortForwardReconciler) handleServiceDeletion(ctx context.Context, names
 	currentRules, err := r.Router.ListAllPortForwards(ctx)
 	if err != nil {
 		logger.Error(err, "Failed to list current port forwards for cleanup")
-		return ctrl.Result{}, err
+		// Don't fail the reconciliation, just log the error
+		return ctrl.Result{}, nil
 	}
 
 	// Remove all rules that belong to this service
 	servicePrefix := fmt.Sprintf("%s/%s:", namespacedName.Namespace, namespacedName.Name)
 	removedCount := 0
-	var cleanupErr error
+	var cleanupErrors []string
 
 	for _, rule := range currentRules {
 		if strings.HasPrefix(rule.Name, servicePrefix) {
@@ -199,12 +182,12 @@ func (r *PortForwardReconciler) handleServiceDeletion(ctx context.Context, names
 
 			if err := r.Router.RemovePort(ctx, config); err != nil {
 				logger.Error(err, "Failed to remove port forward rule during service deletion",
-					"port", config.DstPort)
-				cleanupErr = fmt.Errorf("failed to remove port forward rule during service deletion: %w", err)
+					"port", config.DstPort, "rule_name", rule.Name)
+				cleanupErrors = append(cleanupErrors, fmt.Sprintf("port %d: %v", config.DstPort, err))
 			} else {
 				removedCount++
-				logger.Info("Removed port forward rule during service deletion",
-					"port", config.DstPort)
+				logger.Info("Successfully removed port forward rule during service deletion",
+					"port", config.DstPort, "rule_name", rule.Name)
 				// Add port conflict tracking cleanup
 				helpers.UnmarkPortUsed(config.DstPort)
 			}
@@ -212,11 +195,10 @@ func (r *PortForwardReconciler) handleServiceDeletion(ctx context.Context, names
 	}
 
 	logger.Info("Service deletion cleanup completed",
-		"removed_count", removedCount)
+		"removed_count", removedCount, "errors_count", len(cleanupErrors))
 
-	if cleanupErr != nil {
-		return ctrl.Result{}, cleanupErr
-	}
+	// Always return success - this is cleanup for already-deleted services
+	// We don't want to retry and block other operations
 	return ctrl.Result{}, nil
 }
 
@@ -303,32 +285,12 @@ func (r *PortForwardReconciler) processAllChanges(ctx context.Context, service *
 	// After successful operations, collect final rules for change context
 	successfulCount := len(result.Created) + len(result.Updated)
 	if successfulCount > 0 {
-		changeContext.PortForwardRules = collectRulesForService(desiredConfigs)
-
-		// Publish events for successful operations
-		if r.EventPublisher != nil && len(result.Created) > 0 {
-			for _, created := range result.Created {
-				lbIP := helpers.GetLBIP(service)
-				r.EventPublisher.PublishPortForwardCreatedEvent(ctx, service, changeContext,
-					fmt.Sprintf("%d:%d", created.DstPort, created.FwdPort),
-					lbIP, created.DstIP, created.DstPort, created.Protocol, "RulesCreatedSuccessfully")
-			}
-
-			// Publish update events
-			for _, updated := range result.Updated {
-				lbIP := helpers.GetLBIP(service)
-				r.EventPublisher.PublishPortForwardUpdatedEvent(ctx, service, changeContext,
-					fmt.Sprintf("%d:%d", updated.DstPort, updated.FwdPort),
-					lbIP, updated.DstIP, updated.DstPort, updated.Protocol, "RulesUpdatedSuccessfully")
-			}
-
-			// Publish deletion events
-			for _, deleted := range result.Deleted {
-				r.EventPublisher.PublishPortForwardDeletedEvent(ctx, service, changeContext,
-					fmt.Sprintf("%d:%d", deleted.DstPort, deleted.FwdPort),
-					deleted.DstPort, deleted.Protocol, "RulesDeletedSuccessfully")
-			}
+		// Convert desiredConfigs to string representation for PortForwardRules
+		var ruleNames []string
+		for _, config := range desiredConfigs {
+			ruleNames = append(ruleNames, fmt.Sprintf("%d:%d", config.DstPort, config.FwdPort))
 		}
+		changeContext.PortForwardRules = ruleNames
 	}
 
 	// Publish events for successful operations
@@ -361,99 +323,49 @@ func (r *PortForwardReconciler) processAllChanges(ctx context.Context, service *
 // handleFinalizerCleanup performs cleanup when service is being deleted with finalizer
 func (r *PortForwardReconciler) handleFinalizerCleanup(ctx context.Context, service *corev1.Service) (ctrl.Result, error) {
 	logger := ctrllog.FromContext(ctx).WithValues("namespace", service.Namespace, "name", service.Name)
+	logger.Info("Starting finalizer cleanup for service deletion")
 
-	// Get cleanup status annotations
-	annotations := service.GetAnnotations()
-	if annotations == nil {
-		annotations = make(map[string]string)
-	}
+	// Perform best-effort cleanup without annotation tracking (annotations not available during deletion)
+	cleanupErr := r.performBestEffortCleanup(ctx, service)
 
-	// Get current attempt count
-	attemptsStr := annotations[config.CleanupAttemptsAnnotation]
-	attempts := 0
-	if attemptsStr != "" {
-		if parsed, err := strconv.Atoi(attemptsStr); err == nil {
-			attempts = parsed
-		}
-	}
-
-	// Check if we've exceeded max retries
-	if attempts >= r.Config.FinalizerMaxRetries {
-		logger.Error(fmt.Errorf("cleanup exceeded max retries"), "Finalizer cleanup failed after maximum attempts",
-			"attempts", attempts, "max_retries", r.Config.FinalizerMaxRetries)
-
-		// Create a failure event
-		r.createEvent(ctx, service, "CleanupFailed", fmt.Sprintf("Failed cleanup service: %s - exceeded maximum attempts, manual intervention required", service.Name))
-
-		// Remove finalizer to allow deletion (with manual intervention marker)
-		controllerutil.RemoveFinalizer(service, config.FinalizerLabel)
-		annotations[config.CleanupStatusAnnotation] = "failed_max_retries"
-		service.SetAnnotations(annotations)
-		if err := r.Update(ctx, service); err != nil {
-			return ctrl.Result{}, err
-		}
-		return ctrl.Result{}, nil
-	}
-
-	// Increment attempt count
-	attempts++
-	annotations[config.CleanupAttemptsAnnotation] = strconv.Itoa(attempts)
-	annotations[config.CleanupStatusAnnotation] = "in_progress"
-	service.SetAnnotations(annotations)
-
-	// Update annotations first
-	if err := r.Update(ctx, service); err != nil {
-		logger.Error(err, "Failed to update cleanup annotations")
-		return ctrl.Result{}, err
-	}
-
-	// Perform cleanup
-	logger.Info("Performing finalizer cleanup", "attempt", attempts)
-	cleanupSuccessful, err := r.performCleanup(ctx, service)
-	if err != nil {
-		logger.Error(err, "Cleanup attempt failed", "attempt", attempts)
-
-		return ctrl.Result{RequeueAfter: r.Config.FinalizerRetryInterval}, nil
-	}
-
-	if !cleanupSuccessful {
-		logger.Info("Cleanup attempt unsuccessful, retrying", "attempt", attempts)
-		return ctrl.Result{RequeueAfter: r.Config.FinalizerRetryInterval}, nil
-	}
-
-	// Cleanup successful - remove finalizer
-	logger.Info("Cleanup successful, removing finalizer")
+	// Always remove finalizer after cleanup attempt, even if some rules failed to delete
+	// This prevents service deletion from hanging indefinitely
+	logger.Info("Removing finalizer after cleanup attempt")
 	controllerutil.RemoveFinalizer(service, config.FinalizerLabel)
-
-	// Clear cleanup annotations
-	annotations[config.CleanupStatusAnnotation] = "completed"
-	delete(annotations, config.CleanupAttemptsAnnotation)
-	service.SetAnnotations(annotations)
 
 	if err := r.Update(ctx, service); err != nil {
 		logger.Error(err, "Failed to remove finalizer")
 		return ctrl.Result{}, err
 	}
 
-	r.createEvent(ctx, service, "CleanupCompleted", fmt.Sprintf("Completed cleanup service: %s", service.Name))
+	// Create event for visibility
+	eventMessage := fmt.Sprintf("Finalizer cleanup completed for service: %s", service.Name)
+	if cleanupErr != nil {
+		eventMessage = fmt.Sprintf("Finalizer cleanup completed with errors for service: %s - some rules may need manual cleanup", service.Name)
+		logger.Error(cleanupErr, "Cleanup completed with partial failures")
+	}
+	r.createEvent(ctx, service, "FinalizerCleanupCompleted", eventMessage)
+
+	logger.Info("Finalizer cleanup completed, service can now be deleted")
 	return ctrl.Result{}, nil
 }
 
-// performCleanup performs the actual cleanup of port forwarding rules
-func (r *PortForwardReconciler) performCleanup(ctx context.Context, service *corev1.Service) (bool, error) {
+// performBestEffortCleanup performs best-effort cleanup without retry logic during finalizer cleanup
+func (r *PortForwardReconciler) performBestEffortCleanup(ctx context.Context, service *corev1.Service) error {
+	logger := ctrllog.FromContext(ctx).WithValues("namespace", service.Namespace, "name", service.Name)
 	namespacedName := client.ObjectKey{Namespace: service.Namespace, Name: service.Name}
 
 	// Get current port forward rules
 	currentRules, err := r.Router.ListAllPortForwards(ctx)
 	if err != nil {
-		ctrllog.FromContext(ctx).Error(err, "Failed to list current port forwards for cleanup")
-		return false, err
+		logger.Error(err, "Failed to list current port forwards for cleanup")
+		return err
 	}
 
 	// Remove all rules that belong to this service
 	servicePrefix := fmt.Sprintf("%s/%s:", namespacedName.Namespace, namespacedName.Name)
 	removedCount := 0
-	var lastErr error
+	var cleanupErrors []string
 
 	for _, rule := range currentRules {
 		if strings.HasPrefix(rule.Name, servicePrefix) {
@@ -469,32 +381,95 @@ func (r *PortForwardReconciler) performCleanup(ctx context.Context, service *cor
 			}
 
 			if err := r.Router.RemovePort(ctx, config); err != nil {
-				ctrllog.FromContext(ctx).Error(err, "Failed to remove port forward rule during finalizer cleanup",
-					"port", config.DstPort)
-				lastErr = err
+				logger.Error(err, "Failed to remove port forward rule during finalizer cleanup",
+					"port", config.DstPort, "rule_name", rule.Name)
+				cleanupErrors = append(cleanupErrors, fmt.Sprintf("port %d: %v", config.DstPort, err))
 			} else {
 				removedCount++
-				ctrllog.FromContext(ctx).Info("Removed port forward rule during finalizer cleanup",
-					"port", config.DstPort)
+				logger.Info("Successfully removed port forward rule during finalizer cleanup",
+					"port", config.DstPort, "rule_name", rule.Name)
 				// Add port conflict tracking cleanup
 				helpers.UnmarkPortUsed(config.DstPort)
 			}
 		}
 	}
 
-	ctrllog.FromContext(ctx).Info("Finalizer cleanup completed",
-		"removed_count", removedCount)
+	logger.Info("Finalizer cleanup completed",
+		"removed_count", removedCount, "errors_count", len(cleanupErrors))
 
-	// Consider cleanup successful if we removed any rules or there were no matching rules to remove
-	hasMatching := false
+	// Return error summary if there were cleanup failures
+	if len(cleanupErrors) > 0 {
+		return fmt.Errorf("cleanup completed with %d failures: %s", len(cleanupErrors), strings.Join(cleanupErrors, "; "))
+	}
+
+	return nil
+}
+
+// 🆕 syncRouterState synchronizes router rules to internal maps for state tracking
+func (r *PortForwardReconciler) syncRouterState(ctx context.Context) error {
+	logger := ctrllog.FromContext(ctx).WithValues("operation", "sync_router_state")
+
+	// Get current router rules
+	currentRules, err := r.Router.ListAllPortForwards(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to list port forwards for state sync: %w", err)
+	}
+
+	// Clear existing maps
+	r.ruleOwnerMap = make(map[string]string)
+	r.serviceRuleMap = make(map[string][]*unifi.PortForward)
+
+	// Populate maps with current router state
 	for _, rule := range currentRules {
-		if strings.HasPrefix(rule.Name, servicePrefix) {
-			hasMatching = true
-			break
+		// Extract service key from rule name (format: "namespace/service-name:port-name")
+		parts := strings.SplitN(rule.Name, ":", 3)
+		if len(parts) >= 2 {
+			serviceKey := fmt.Sprintf("%s/%s", parts[0], parts[1])
+			r.ruleOwnerMap[rule.DstPort] = serviceKey
+			r.serviceRuleMap[serviceKey] = append(r.serviceRuleMap[serviceKey], rule)
 		}
 	}
-	success := removedCount > 0 || !hasMatching
-	return success, lastErr
+
+	logger.Info("Synchronized router state",
+		"total_rules", len(currentRules),
+		"service_mappings", len(r.serviceRuleMap),
+		"port_mappings", len(r.ruleOwnerMap))
+
+	return nil
+}
+
+// 🆕 detectChanges determines what changes are needed using synchronized state
+func (r *PortForwardReconciler) detectChanges(ctx context.Context, service *corev1.Service, serviceKey string) *ChangeContext {
+	lbIP := helpers.GetLBIP(service)
+
+	// Get current rules for this service from internal map
+	currentRules := r.serviceRuleMap[serviceKey]
+
+	changeContext := &ChangeContext{
+		ServiceKey:       serviceKey,
+		ServiceNamespace: service.Namespace,
+		ServiceName:      service.Name,
+		IsInitialSync:    true, // Mark as initial sync
+	}
+
+	// Calculate desired state for optimization comparison
+	desiredConfigs, err := r.calculateDesiredState(service)
+	if err != nil {
+		// Log error but don't fail - fall back to IP-based detection
+		ctrllog.FromContext(ctx).Error(err, "Failed to calculate desired state for optimization")
+		return r.fallbackToIPChangeDetection(currentRules, lbIP, changeContext)
+	}
+
+	// Perform comprehensive comparison for optimization
+	if r.portConfigsMatch(currentRules, desiredConfigs, lbIP) {
+		// No changes detected - skip processing
+		changeContext.IsInitialSync = false
+		return changeContext
+	}
+
+	// Fall back to detailed change analysis
+	changeContext = r.analyzeDetailedChanges(currentRules, desiredConfigs, lbIP, changeContext)
+	return changeContext
 }
 
 // createEvent creates a Kubernetes event for the service
@@ -538,6 +513,10 @@ func (r *PortForwardReconciler) parseIntField(field string) int {
 
 // SetupWithManager sets up the controller with a manager
 func (r *PortForwardReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	// Initialize internal state maps
+	r.ruleOwnerMap = make(map[string]string)
+	r.serviceRuleMap = make(map[string][]*unifi.PortForward)
+
 	// Initialize recorder
 	r.Recorder = mgr.GetEventRecorderFor("unifi-port-forwarder")
 
@@ -552,4 +531,90 @@ func (r *PortForwardReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		WithEventFilter(eventFilter).
 		Named("port-forward-controller").
 		Complete(r)
+}
+
+// portConfigsMatch compares current router rules with desired configurations
+// Returns true if the states are identical, false if changes are needed
+func (r *PortForwardReconciler) portConfigsMatch(currentRules []*unifi.PortForward, desiredConfigs []routers.PortConfig, expectedIP string) bool {
+	// Quick length check
+	if len(currentRules) != len(desiredConfigs) {
+		return false
+	}
+
+	// Build maps for efficient comparison
+	currentMap := make(map[string]*unifi.PortForward)
+	for _, rule := range currentRules {
+		key := fmt.Sprintf("%d-%d-%s", r.parseIntField(rule.DstPort),
+			r.parseIntField(rule.FwdPort), rule.Proto)
+		currentMap[key] = rule
+	}
+
+	// Check each desired config against current state
+	for _, desired := range desiredConfigs {
+		key := fmt.Sprintf("%d-%d-%s", desired.DstPort, desired.FwdPort, desired.Protocol)
+
+		current, exists := currentMap[key]
+		if !exists {
+			return false // Rule doesn't exist
+		}
+
+		// Compare critical fields
+		if current.DestinationIP != expectedIP {
+			return false // IP changed
+		}
+
+		if desired.Enabled != current.Enabled {
+			return false // Enabled status changed
+		}
+	}
+
+	return true // All configurations match
+}
+
+// fallbackToIPChangeDetection provides fallback when desired state calculation fails
+func (r *PortForwardReconciler) fallbackToIPChangeDetection(currentRules []*unifi.PortForward, lbIP string, changeContext *ChangeContext) *ChangeContext {
+	if currentRules != nil {
+		for _, rule := range currentRules {
+			if rule.DestinationIP != lbIP {
+				changeContext.IPChanged = true
+				changeContext.OldIP = rule.DestinationIP
+				changeContext.NewIP = lbIP
+				break
+			}
+		}
+	}
+	return changeContext
+}
+
+// analyzeDetailedChanges performs detailed change analysis when optimization indicates changes needed
+func (r *PortForwardReconciler) analyzeDetailedChanges(currentRules []*unifi.PortForward, desiredConfigs []routers.PortConfig, lbIP string, changeContext *ChangeContext) *ChangeContext {
+	// Set IsInitialSync to false for processing
+	changeContext.IsInitialSync = false
+
+	// Check for IP changes in existing rules
+	if len(currentRules) > 0 && len(desiredConfigs) > 0 {
+		for _, rule := range currentRules {
+			if rule.DestinationIP != lbIP {
+				changeContext.IPChanged = true
+				changeContext.OldIP = rule.DestinationIP
+				changeContext.NewIP = lbIP
+				break
+			}
+		}
+	}
+
+	if len(currentRules) == 0 && len(desiredConfigs) > 0 {
+		// New service - this counts as a spec change (adding ports)
+		changeContext.SpecChanged = true
+	} else if len(currentRules) > 0 && len(desiredConfigs) == 0 {
+		// Service removed - this counts as a spec change (removing ports)
+		changeContext.SpecChanged = true
+	} else if len(currentRules) > 0 && len(desiredConfigs) > 0 {
+		// Complex change - mark as spec changed for now
+		changeContext.SpecChanged = true
+	}
+
+	// Perform detailed analysis (existing logic)
+	// This is where we can add granular change tracking in the future
+	return changeContext
 }

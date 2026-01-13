@@ -80,7 +80,7 @@ func (e *ErrorRateLimiter) ShouldLogError(serviceKey string, err error) (bool, s
 			lastErrorTime:       now,
 			lastLogTime:         now,
 			errorCount:          1,
-			currentBackoffIndex: 1, // Set to 1 after first error (next error will be suppressed)
+			currentBackoffIndex: 1, // Set to 1 after first error (next error will wait 1 minute)
 			nextBackoffIndex:    2, // Next error will use index 2 (5 minutes)
 			errorHash:           errorHash,
 		}
@@ -112,13 +112,11 @@ func (e *ErrorRateLimiter) ShouldLogError(serviceKey string, err error) (bool, s
 		entry.lastError = err
 		entry.lastErrorTime = now
 		entry.lastLogTime = now
-		entry.errorCount++
 
-		// Advance current backoff index for next time
+		// Advance backoff indices for next time (but don't exceed max)
 		if entry.currentBackoffIndex < len(e.backoffSchedule)-1 {
 			entry.currentBackoffIndex++
 		}
-		// nextBackoffIndex stays ahead of current by 1 (unless at max)
 		if entry.nextBackoffIndex < len(e.backoffSchedule)-1 {
 			entry.nextBackoffIndex++
 		}
@@ -223,13 +221,15 @@ func NewErrorRateLimiterWithTime(timeProvider testutils.TimeProvider) *ErrorRate
 		timeProvider: timeProvider,
 	}
 
-	// Start cleanup goroutine to remove old error entries
-	erl.cleanupTicker = time.NewTicker(24 * time.Hour)
-	go func() {
-		for range erl.cleanupTicker.C {
-			erl.cleanup()
-		}
-	}()
+	// Only start cleanup goroutine for real time provider (not for tests)
+	if _, isRealTime := timeProvider.(*testutils.RealTimeProvider); isRealTime {
+		erl.cleanupTicker = time.NewTicker(24 * time.Hour)
+		go func() {
+			for range erl.cleanupTicker.C {
+				erl.cleanup()
+			}
+		}()
+	}
 
 	return erl
 }
@@ -265,7 +265,7 @@ func (e *ErrorRateLimiter) FilterErrorForReconcile(serviceKey string, err error)
 		entry.lastError = err
 		entry.lastErrorTime = now
 		entry.lastLogTime = now
-		entry.errorCount++
+		entry.errorCount = 1 // Reset count for new error type
 		entry.currentBackoffIndex = 1
 		entry.nextBackoffIndex = 2
 		entry.errorHash = errorHash
@@ -284,7 +284,6 @@ func (e *ErrorRateLimiter) FilterErrorForReconcile(serviceKey string, err error)
 		entry.lastError = err
 		entry.lastErrorTime = now
 		entry.lastLogTime = now
-		entry.errorCount++
 
 		// Advance current backoff index for next time
 		if entry.currentBackoffIndex < len(e.backoffSchedule)-1 {

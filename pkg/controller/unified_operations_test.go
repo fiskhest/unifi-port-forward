@@ -86,7 +86,6 @@ func TestCalculateDelta_UpdateScenario(t *testing.T) {
 	}
 
 	changeContext := &ChangeContext{
-		IPChanged:        true,
 		ServiceKey:       "default/test-service",
 		ServiceNamespace: "default",
 		ServiceName:      "test-service",

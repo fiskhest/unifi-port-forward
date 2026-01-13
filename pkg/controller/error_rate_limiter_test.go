@@ -385,10 +385,10 @@ func TestErrorRateLimiter_BugReproduction(t *testing.T) {
 		{1, true, "First error - immediate", 0},
 		{2, false, "Second error - should be suppressed", 0},
 		{3, false, "Third error - still suppressed", 30 * time.Second},
-		{4, true, "After 1 minute - should log again", 30 * time.Second}, // Total 1 minute
-		{5, false, "After 1 minute - should be suppressed", 0},
-		{6, false, "After 1 minute - still suppressed", 3 * time.Minute}, // Total 4 minutes
-		{7, true, "After 5 minutes - should log again", 2 * time.Minute}, // 2m since last log (need 5m total from call 4)
+		{4, true, "After 1 minute - should log again", 30 * time.Second}, // Total 1 minute since last log
+		{5, false, "After log - should be suppressed", 0},
+		{6, false, "After 1 minute - still suppressed", 3 * time.Minute}, // Total 4 minutes since last log
+		{7, true, "After 5 minutes - should log again", 2 * time.Minute}, // 2 more minutes = 5 minutes total since last log (at index 2)
 	}
 
 	for _, tc := range testCases {
