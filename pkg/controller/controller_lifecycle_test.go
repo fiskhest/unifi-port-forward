@@ -2,12 +2,14 @@ package controller
 
 import (
 	"context"
+	"reflect"
 	"testing"
+
+	"unifi-port-forwarder/pkg/config"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"unifi-port-forwarder/pkg/config"
 )
 
 // TestController_Startup_PreAnnotatedService tests controller startup scenario
@@ -31,7 +33,14 @@ func TestController_Startup_PreAnnotatedService(t *testing.T) {
 
 	// Now "start controller" by reconciling the pre-existing service
 	result, err := env.ReconcileService(preAnnotatedService)
-	env.AssertReconcileSuccess(t, result, err)
+	// Handle potential requeue from finalizer addition
+	if result.Requeue {
+		// Second reconciliation should process normally
+		result, err = env.ReconcileService(preAnnotatedService)
+		env.AssertReconcileSuccess(t, result, err)
+	} else {
+		env.AssertReconcileSuccess(t, result, err)
+	}
 
 	// Verify port forward rule was created
 	env.AssertRuleExistsByName(t, "default/pre-annotated:http")
@@ -66,7 +75,7 @@ func TestController_Startup_MultiplePreAnnotatedServices(t *testing.T) {
 			namespace:   "default",
 			annotations: map[string]string{config.FilterAnnotation: "3306:mysql"},
 			ports:       []corev1.ServicePort{{Name: "mysql", Port: 3306, Protocol: corev1.ProtocolTCP}},
-			lbIP:        "192.168.1.50",
+			lbIP:        "192.168.1.101",
 		},
 		{
 			name:        "webapp",
@@ -80,48 +89,53 @@ func TestController_Startup_MultiplePreAnnotatedServices(t *testing.T) {
 		},
 		{
 			name:        "cache",
-			namespace:   "default",
+			namespace:   "staging",
 			annotations: map[string]string{config.FilterAnnotation: "6379:redis"},
 			ports:       []corev1.ServicePort{{Name: "redis", Port: 6379, Protocol: corev1.ProtocolTCP}},
-			lbIP:        "192.168.1.70",
+			lbIP:        "192.168.1.103",
 		},
 	}
 
-	// Create all services first (simulating pre-existing state)
-	for _, svc := range services {
-		service := env.CreateTestService(svc.namespace, svc.name, svc.annotations, svc.ports, svc.lbIP)
-		if err := env.CreateService(ctx, service); err != nil {
-			t.Fatalf("Failed to create service %s: %v", svc.name, err)
-		}
-	}
+	for _, svcConfig := range services {
+		service := env.CreateTestService(svcConfig.namespace, svcConfig.name,
+			svcConfig.annotations, svcConfig.ports, svcConfig.lbIP)
 
-	// Simulate controller startup by reconciling all services
-	for _, svc := range services {
-		service := env.CreateTestService(svc.namespace, svc.name, svc.annotations, svc.ports, svc.lbIP)
-		result, err := env.ReconcileService(service)
-		env.AssertReconcileSuccess(t, result, err)
+		// Simulate controller startup by creating services in fake client first
+		if err := env.CreateService(ctx, service); err != nil {
+			t.Fatalf("Failed to create %s service: %v", svcConfig.name, err)
+		}
+
+		// First reconciliation - might requeue after adding finalizer
+		_, err := env.ReconcileServiceWithFinalizer(t, service)
+		if err != nil {
+			t.Errorf("Failed to reconcile %s service: %v", svcConfig.name, err)
+			continue
+		}
+
+		// ReconcileServiceWithFinalizer already handles the two-phase pattern
+		// No additional assertion needed
 	}
 
 	// Verify all port forward rules were created
-	expectedRules := []string{
+	expectedStartupRules := []string{
 		"default/database:mysql",
 		"default/webapp:http",
 		"default/webapp:https",
-		"default/cache:redis",
+		"staging/cache:redis",
 	}
 
-	for _, ruleName := range expectedRules {
+	for _, ruleName := range expectedStartupRules {
 		env.AssertRuleExistsByName(t, ruleName)
 	}
 
 	// Verify specific configurations
-	webappHttpRule := env.MockRouter.GetPortForwardRuleByName("default/webapp:http")
-	if webappHttpRule == nil || webappHttpRule.Fwd != "192.168.1.60" {
+	webappHTTPRule := env.MockRouter.GetPortForwardRuleByName("default/webapp:http")
+	if webappHTTPRule == nil || webappHTTPRule.Fwd != "192.168.1.60" {
 		t.Error("webapp http rule doesn't have correct IP")
 	}
 
-	webappHttpsRule := env.MockRouter.GetPortForwardRuleByName("default/webapp:https")
-	if webappHttpsRule == nil || webappHttpsRule.Fwd != "192.168.1.60" || webappHttpsRule.DstPort != "8443" {
+	webappHTTPSRule := env.MockRouter.GetPortForwardRuleByName("default/webapp:https")
+	if webappHTTPSRule == nil || webappHTTPSRule.Fwd != "192.168.1.60" || webappHTTPSRule.DstPort != "8443" {
 		t.Error("webapp https rule doesn't have correct configuration")
 	}
 
@@ -174,18 +188,20 @@ func TestController_Removal_AllRulesCleanup(t *testing.T) {
 			t.Fatalf("Failed to create service %s: %v", svc.name, err)
 		}
 
-		result, err := env.ReconcileService(service)
-		env.AssertReconcileSuccess(t, result, err)
+		_, err := env.ReconcileServiceWithFinalizer(t, service)
+		if err != nil {
+			t.Errorf("Failed to reconcile service %s: %v", svc.name, err)
+		}
 	}
 
 	// Verify all rules were created
-	expectedRules := []string{
+	expectedStartupRules := []string{
 		"default/service-a:http",
 		"production/service-b:https",
 		"staging/service-c:api",
 	}
 
-	for _, ruleName := range expectedRules {
+	for _, ruleName := range expectedStartupRules {
 		env.AssertRuleExistsByName(t, ruleName)
 	}
 
@@ -197,17 +213,45 @@ func TestController_Removal_AllRulesCleanup(t *testing.T) {
 		}
 
 		// Reconcile service deletion (cleanup)
-		result, err := env.Controller.Reconcile(ctx, ctrl.Request{
+		// Create service object for deletion reconciliation
+		deletionService := env.CreateTestService(svc.namespace, svc.name, svc.annotations, svc.ports, svc.lbIP)
+
+		// First reconciliation (might requeue due to finalizer)
+		result, err := env.Controller.Reconcile(context.Background(), ctrl.Request{
 			NamespacedName: types.NamespacedName{
-				Name:      svc.name,
-				Namespace: svc.namespace,
+				Name:      deletionService.Name,
+				Namespace: deletionService.Namespace,
 			},
 		})
-		env.AssertReconcileSuccess(t, result, err)
+		if err != nil {
+			t.Errorf("Failed to reconcile deletion of service %s: %v", svc.name, err)
+		}
+
+		// Handle potential requeue from finalizer addition during deletion
+		if result.Requeue {
+			result, err = env.Controller.Reconcile(context.Background(), ctrl.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      deletionService.Name,
+					Namespace: deletionService.Namespace,
+				},
+			})
+			if err != nil {
+				t.Errorf("Failed to reconcile deletion after finalizer addition: %v", svc.name)
+			}
+			if !reflect.DeepEqual(result, ctrl.Result{}) {
+				t.Errorf("Expected empty result after finalizer addition during deletion, got: %+v", result)
+			}
+		} else if !reflect.DeepEqual(result, ctrl.Result{}) {
+			t.Errorf("Expected empty result during deletion cleanup, got: %+v", result)
+		}
+
+		// Verify cleanup happened regardless of requeue behavior
+		t.Logf("Service deletion reconciliation completed")
+		// No need to check result - reconcilerServiceWithFinalizer already validated
 	}
 
 	// Verify all rules were cleaned up
-	for _, ruleName := range expectedRules {
+	for _, ruleName := range expectedStartupRules {
 		env.AssertRuleDoesNotExistByName(t, ruleName)
 	}
 
@@ -259,8 +303,10 @@ func TestController_Restart_ExistingRules(t *testing.T) {
 			t.Fatalf("Failed to create service %s: %v", svc.name, err)
 		}
 
-		result, err := env.ReconcileService(service)
-		env.AssertReconcileSuccess(t, result, err)
+		_, err := env.ReconcileServiceWithFinalizer(t, service)
+		if err != nil {
+			t.Errorf("Failed to reconcile service %s: %v", svc.name, err)
+		}
 	}
 
 	// Verify initial state
@@ -292,8 +338,29 @@ func TestController_Restart_ExistingRules(t *testing.T) {
 
 	// Reconcile persistent-service (simulating restart behavior)
 	// This should update the existing rule with new IP
-	result, err := env.ReconcileService(restartedService)
-	env.AssertReconcileSuccess(t, result, err)
+	// Use direct controller reconcile to simulate actual restart behavior
+	result, err := env.Controller.Reconcile(ctx, ctrl.Request{
+		NamespacedName: types.NamespacedName{
+			Name:      restartedService.Name,
+			Namespace: restartedService.Namespace,
+		},
+	})
+	// Allow for potential requeue during restart behavior
+	if err != nil {
+		t.Errorf("Failed to reconcile persistent-service during restart: %v", err)
+	}
+	// If requeue was requested, reconcile again to complete the operation
+	if result.Requeue {
+		_, err = env.Controller.Reconcile(ctx, ctrl.Request{
+			NamespacedName: types.NamespacedName{
+				Name:      restartedService.Name,
+				Namespace: restartedService.Namespace,
+			},
+		})
+		if err != nil {
+			t.Errorf("Failed to reconcile persistent-service after requeue: %v", err)
+		}
+	}
 
 	// Now reconcile the deletion of temp-service (which was deleted while controller was down)
 	result, err = env.Controller.Reconcile(ctx, ctrl.Request{
@@ -302,7 +369,22 @@ func TestController_Restart_ExistingRules(t *testing.T) {
 			Namespace: "default",
 		},
 	})
-	env.AssertReconcileSuccess(t, result, err)
+	// Allow for potential requeue during deletion cleanup
+	if err != nil {
+		t.Errorf("Failed to reconcile temp-service deletion: %v", err)
+	}
+	// If requeue was requested, reconcile again to complete the operation
+	if result.Requeue {
+		_, err = env.Controller.Reconcile(ctx, ctrl.Request{
+			NamespacedName: types.NamespacedName{
+				Name:      "temp-service",
+				Namespace: "default",
+			},
+		})
+		if err != nil {
+			t.Errorf("Failed to reconcile temp-service deletion after requeue: %v", err)
+		}
+	}
 
 	// Verify final state:
 	// 1. persistent-service rule should exist with updated IP

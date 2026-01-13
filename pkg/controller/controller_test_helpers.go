@@ -160,6 +160,40 @@ func (env *ControllerTestEnv) AssertReconcileSuccess(t *testing.T, result ctrl.R
 	}
 }
 
+// AssertReconcileSuccessWithPotentialRequeue verifies reconciliation succeeded, allowing for requeue on first call
+func (env *ControllerTestEnv) AssertReconcileSuccessWithPotentialRequeue(t *testing.T, result ctrl.Result, err error) {
+	if err != nil {
+		t.Errorf("Expected no error, got: %v", err)
+	}
+	// Allow requeue on first reconciliation (finalizer addition) but expect no requeue on subsequent calls
+	if !result.Requeue || !reflect.DeepEqual(result.RequeueAfter, time.Duration(0)) {
+		t.Errorf("Expected either empty result or requeue with 0 delay, got: %+v", result)
+	}
+}
+
+// ReconcileServiceWithFinalizer handles the two-phase reconciliation pattern needed after adding finalizer logic
+func (env *ControllerTestEnv) ReconcileServiceWithFinalizer(t *testing.T, service *corev1.Service) (ctrl.Result, error) {
+	result, err := env.ReconcileService(service)
+	if err != nil {
+		t.Fatalf("Failed to reconcile service: %v", err)
+	}
+
+	// If requeue was requested (likely finalizer addition), reconcile again
+	if result.Requeue {
+		result, err = env.ReconcileService(service)
+		if err != nil {
+			t.Fatalf("Failed to reconcile service after finalizer addition: %v", err)
+		}
+		if !reflect.DeepEqual(result, ctrl.Result{}) {
+			t.Errorf("Expected empty result after finalizer addition, got: %+v", result)
+		}
+	} else if !reflect.DeepEqual(result, ctrl.Result{}) {
+		t.Errorf("Expected empty result (no requeue), got: %+v", result)
+	}
+
+	return result, err
+}
+
 // AssertReconcileError verifies that reconciliation returned expected error
 func (env *ControllerTestEnv) AssertReconcileError(t *testing.T, expectedErr string, result ctrl.Result, err error) {
 	if err == nil {

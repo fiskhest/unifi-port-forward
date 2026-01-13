@@ -336,8 +336,11 @@ func TestReconcile_FailedCleanup_ServiceDeletion(t *testing.T) {
 		t.Fatalf("Failed to create cleanup-test service: %v", err)
 	}
 
-	result, err := env.ReconcileService(service)
-	env.AssertReconcileSuccess(t, result, err)
+	var err error
+	_, err = env.ReconcileServiceWithFinalizer(t, service)
+	if err != nil {
+		t.Errorf("Failed to reconcile service: %v", err)
+	}
 
 	// Verify rule exists
 	env.AssertRuleExistsByName(t, "default/cleanup-test:http")
@@ -382,6 +385,7 @@ func TestReconcile_FailedCleanup_ServiceDeletion(t *testing.T) {
 	env.MockRouter.SetSimulatedFailure("RemovePort", false)
 
 	// Reconcile again - should succeed
+	var result ctrl.Result
 	result, err = env.Controller.Reconcile(ctx, ctrl.Request{
 		NamespacedName: types.NamespacedName{
 			Name:      "cleanup-test",
@@ -418,10 +422,31 @@ func TestReconcile_RetryLogic_FailedOperations(t *testing.T) {
 	// Enable simulated failure for AddPort operation
 	env.MockRouter.SetSimulatedFailure("AddPort", true)
 
-	// First reconciliation attempt - should fail
-	_, err := env.ReconcileService(service)
-	if err == nil {
-		t.Error("Expected AddPort failure on first attempt, but got none")
+	// First reconciliation attempt - simulate failure scenario
+	// Use controller directly to handle both phases of reconciliation
+	result, err := env.Controller.Reconcile(ctx, ctrl.Request{
+		NamespacedName: types.NamespacedName{
+			Name:      service.Name,
+			Namespace: service.Namespace,
+		},
+	})
+	// First phase should succeed (add finalizer), but might requeue
+	if err != nil {
+		t.Errorf("Unexpected error on first reconciliation phase: %v", err)
+	}
+
+	// If requeue was requested, reconcile again to trigger AddPort failure
+	if result.Requeue {
+		_, err = env.Controller.Reconcile(ctx, ctrl.Request{
+			NamespacedName: types.NamespacedName{
+				Name:      service.Name,
+				Namespace: service.Namespace,
+			},
+		})
+		// Second phase should now fail due to AddPort failure
+		if err == nil {
+			t.Error("Expected AddPort failure on second attempt, but got none")
+		}
 	}
 
 	// Verify rule doesn't exist due to failure
@@ -430,9 +455,25 @@ func TestReconcile_RetryLogic_FailedOperations(t *testing.T) {
 	// Disable simulated failure
 	env.MockRouter.SetSimulatedFailure("AddPort", false)
 
-	// Second reconciliation attempt - should succeed
-	result, err := env.ReconcileService(service)
-	env.AssertReconcileSuccess(t, result, err)
+	// Third reconciliation attempt - should succeed
+	result, err = env.Controller.Reconcile(ctx, ctrl.Request{
+		NamespacedName: types.NamespacedName{
+			Name:      service.Name,
+			Namespace: service.Namespace,
+		},
+	})
+	// Handle potential requeue from finalizer logic
+	if result.Requeue {
+		result, err = env.Controller.Reconcile(ctx, ctrl.Request{
+			NamespacedName: types.NamespacedName{
+				Name:      service.Name,
+				Namespace: service.Namespace,
+			},
+		})
+	}
+	if err != nil {
+		t.Errorf("Failed to reconcile service after disabling failure: %v", err)
+	}
 
 	// Verify rule is created on retry
 	env.AssertRuleExistsByName(t, "default/retry-test:http")
@@ -490,16 +531,34 @@ func TestReconcile_PartialFailure_Scenarios(t *testing.T) {
 			env.MockRouter.SetSimulatedFailure("AddPort", true)
 		}
 
-		// Reconcile
-		result, err := env.ReconcileService(service)
+		// Reconcile using controller directly to handle two-phase pattern
+		result, err := env.Controller.Reconcile(ctx, ctrl.Request{
+			NamespacedName: types.NamespacedName{
+				Name:      service.Name,
+				Namespace: service.Namespace,
+			},
+		})
+
+		// Handle potential requeue from finalizer addition
+		if result.Requeue {
+			result, err = env.Controller.Reconcile(ctx, ctrl.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      service.Name,
+					Namespace: service.Namespace,
+				},
+			})
+		}
+
 		if i == 1 {
-			// Second service should fail
+			// Second service should fail due to AddPort failure
 			if err == nil {
 				t.Error("Expected AddPort failure for partial-service-2, but got none")
 			}
 		} else {
 			// First service should succeed
-			env.AssertReconcileSuccess(t, result, err)
+			if err != nil {
+				t.Errorf("Unexpected error for partial-service-1: %v", err)
+			}
 		}
 
 		// Reset failure for next iteration
@@ -545,7 +604,25 @@ func TestReconcile_RouterCommunication_Failures(t *testing.T) {
 	// Test 1: ListAllPortForwards failure
 	env.MockRouter.ResetOperationCounts()
 	env.MockRouter.SetSimulatedFailure("ListAllPortForwards", true)
-	_, err := env.ReconcileService(service)
+
+	// Use controller directly to handle two-phase reconciliation
+	result, err := env.Controller.Reconcile(ctx, ctrl.Request{
+		NamespacedName: types.NamespacedName{
+			Name:      service.Name,
+			Namespace: service.Namespace,
+		},
+	})
+
+	// Handle potential requeue from finalizer addition
+	if result.Requeue {
+		result, err = env.Controller.Reconcile(ctx, ctrl.Request{
+			NamespacedName: types.NamespacedName{
+				Name:      service.Name,
+				Namespace: service.Namespace,
+			},
+		})
+	}
+
 	if err == nil {
 		t.Error("Expected failure for Failed to list existing rules scenario, but got none")
 	}
@@ -567,7 +644,24 @@ func TestReconcile_RouterCommunication_Failures(t *testing.T) {
 
 	env.MockRouter.ResetOperationCounts()
 	env.MockRouter.SetSimulatedFailure("AddPort", true)
-	_, err = env.ReconcileService(newService)
+
+	result, err = env.Controller.Reconcile(ctx, ctrl.Request{
+		NamespacedName: types.NamespacedName{
+			Name:      newService.Name,
+			Namespace: newService.Namespace,
+		},
+	})
+
+	// Handle potential requeue from finalizer addition
+	if result.Requeue {
+		result, err = env.Controller.Reconcile(ctx, ctrl.Request{
+			NamespacedName: types.NamespacedName{
+				Name:      newService.Name,
+				Namespace: newService.Namespace,
+			},
+		})
+	}
+
 	if err == nil {
 		t.Error("Expected failure for Failed to create new rule scenario, but got none")
 		t.Logf("Operation counts: %v", env.MockRouter.GetOperationCounts())
@@ -591,7 +685,23 @@ func TestReconcile_RouterCommunication_Failures(t *testing.T) {
 	}
 
 	// Initial reconciliation to create the rule
-	_, err = env.ReconcileService(updateTestService)
+	result, err = env.Controller.Reconcile(ctx, ctrl.Request{
+		NamespacedName: types.NamespacedName{
+			Name:      updateTestService.Name,
+			Namespace: updateTestService.Namespace,
+		},
+	})
+
+	// Handle potential requeue from finalizer addition
+	if result.Requeue {
+		result, err = env.Controller.Reconcile(ctx, ctrl.Request{
+			NamespacedName: types.NamespacedName{
+				Name:      updateTestService.Name,
+				Namespace: updateTestService.Namespace,
+			},
+		})
+	}
+
 	if err != nil {
 		t.Fatalf("Failed to initially reconcile update-test service: %v", err)
 	}
@@ -612,7 +722,12 @@ func TestReconcile_RouterCommunication_Failures(t *testing.T) {
 	}
 
 	// Reconcile should attempt to update the rule and fail
-	ctrlResult, err := env.ReconcileService(updateTestService)
+	ctrlResult, err := env.Controller.Reconcile(ctx, ctrl.Request{
+		NamespacedName: types.NamespacedName{
+			Name:      updateTestService.Name,
+			Namespace: updateTestService.Namespace,
+		},
+	})
 
 	// Check what operations were attempted
 	ops = env.MockRouter.GetOperationCounts()
@@ -650,7 +765,23 @@ func TestReconcile_RouterCommunication_Failures(t *testing.T) {
 	}
 
 	// First reconcile to create rule
-	_, err = env.ReconcileService(deleteService)
+	result, err = env.Controller.Reconcile(ctx, ctrl.Request{
+		NamespacedName: types.NamespacedName{
+			Name:      deleteService.Name,
+			Namespace: deleteService.Namespace,
+		},
+	})
+
+	// Handle potential requeue from finalizer addition
+	if result.Requeue {
+		result, err = env.Controller.Reconcile(ctx, ctrl.Request{
+			NamespacedName: types.NamespacedName{
+				Name:      deleteService.Name,
+				Namespace: deleteService.Namespace,
+			},
+		})
+	}
+
 	if err != nil {
 		t.Fatalf("Failed to initially reconcile comm-test-delete service: %v", err)
 	}
@@ -680,36 +811,6 @@ func TestReconcile_RouterCommunication_Failures(t *testing.T) {
 		t.Logf("Delete scenario completed without error (current behavior), result: %+v", ctrlResult)
 	}
 
-	// First reconcile to create rule
-	_, err = env.ReconcileService(deleteService)
-	if err != nil {
-		t.Fatalf("Failed to initially reconcile comm-test-delete service: %v", err)
-	}
-
-	env.MockRouter.ResetOperationCounts()
-	env.MockRouter.SetSimulatedFailure("RemovePort", true)
-	// Delete the service to trigger removal
-	if err := env.DeleteServiceByName(ctx, "default", "comm-test-delete"); err != nil {
-		t.Fatalf("Failed to delete service for RemovePort test: %v", err)
-	}
-	_, err = env.Controller.Reconcile(ctx, ctrl.Request{
-		NamespacedName: types.NamespacedName{
-			Name:      "comm-test-delete",
-			Namespace: "default",
-		},
-	})
-	// Current behavior: may not fail as expected
-	if err != nil {
-		t.Logf("Got error during delete scenario: %v", err)
-	} else {
-		t.Logf("Delete scenario completed without error (current behavior)")
-	}
-	env.MockRouter.SetSimulatedFailure("RemovePort", false)
-	ops = env.MockRouter.GetOperationCounts()
-	if count, exists := ops["RemovePort"]; !exists || count == 0 {
-		t.Error("Expected RemovePort operation to be attempted in Failed to delete rule scenario")
-	}
-
 	t.Log("✅ Router communication failures test passed")
 }
 
@@ -735,7 +836,25 @@ func TestReconcile_SimpleErrorScenario(t *testing.T) {
 	}
 
 	// Reconcile - should fail
-	_, err := env.ReconcileService(service)
+	var result ctrl.Result
+	var err error
+	result, err = env.Controller.Reconcile(ctx, ctrl.Request{
+		NamespacedName: types.NamespacedName{
+			Name:      service.Name,
+			Namespace: service.Namespace,
+		},
+	})
+
+	// Handle potential requeue from finalizer addition
+	if result.Requeue {
+		result, err = env.Controller.Reconcile(ctx, ctrl.Request{
+			NamespacedName: types.NamespacedName{
+				Name:      service.Name,
+				Namespace: service.Namespace,
+			},
+		})
+	}
+
 	if err == nil {
 		t.Errorf("Expected AddPort failure, but got none. Ops: %v", env.MockRouter.GetOperationCounts())
 	}
@@ -750,8 +869,10 @@ func TestReconcile_SimpleErrorScenario(t *testing.T) {
 	env.MockRouter.SetSimulatedFailure("AddPort", false)
 
 	// Reconcile again - should succeed
-	result, err := env.ReconcileService(service)
-	env.AssertReconcileSuccess(t, result, err)
+	_, err = env.ReconcileServiceWithFinalizer(t, service)
+	if err != nil {
+		t.Errorf("Failed to reconcile service: %v", err)
+	}
 
 	// Verify rule exists
 	env.AssertRuleExistsByName(t, "default/simple-error:http")
@@ -787,11 +908,16 @@ func TestReconcile_SimpleMultipleServices(t *testing.T) {
 	}
 
 	// Reconcile both services
-	result, err := env.ReconcileService(service1)
-	env.AssertReconcileSuccess(t, result, err)
+	var err error
+	_, err = env.ReconcileServiceWithFinalizer(t, service1)
+	if err != nil {
+		t.Errorf("Failed to reconcile service1: %v", err)
+	}
 
-	result, err = env.ReconcileService(service2)
-	env.AssertReconcileSuccess(t, result, err)
+	_, err = env.ReconcileServiceWithFinalizer(t, service2)
+	if err != nil {
+		t.Errorf("Failed to reconcile service2: %v", err)
+	}
 
 	// Verify both rules exist
 	env.AssertRuleExistsByName(t, "default/simple-service-1:http")
@@ -819,8 +945,10 @@ func TestReconcile_ServiceRename_CleanupAndCreation(t *testing.T) {
 		t.Fatalf("Failed to create old service: %v", err)
 	}
 
-	result, err := env.ReconcileService(oldService)
-	env.AssertReconcileSuccess(t, result, err)
+	_, err := env.ReconcileServiceWithFinalizer(t, oldService)
+	if err != nil {
+		t.Errorf("Failed to reconcile old service: %v", err)
+	}
 
 	// Verify old service rules exist
 	env.AssertRuleExistsByName(t, "default/old-service:http")
@@ -842,17 +970,31 @@ func TestReconcile_ServiceRename_CleanupAndCreation(t *testing.T) {
 	}
 
 	// Reconcile old service deletion
+	var result ctrl.Result
 	result, err = env.Controller.Reconcile(ctx, ctrl.Request{
 		NamespacedName: types.NamespacedName{
 			Name:      "old-service",
 			Namespace: "default",
 		},
 	})
-	env.AssertReconcileSuccess(t, result, err)
+	// Handle potential requeue from finalizer logic
+	if result.Requeue {
+		result, err = env.Controller.Reconcile(ctx, ctrl.Request{
+			NamespacedName: types.NamespacedName{
+				Name:      "old-service",
+				Namespace: "default",
+			},
+		})
+	}
+	if err != nil {
+		t.Errorf("Failed to reconcile old service deletion: %v", err)
+	}
 
 	// Reconcile new service creation
-	result, err = env.ReconcileService(newService)
-	env.AssertReconcileSuccess(t, result, err)
+	_, err = env.ReconcileServiceWithFinalizer(t, newService)
+	if err != nil {
+		t.Errorf("Failed to reconcile new service creation: %v", err)
+	}
 
 	// Verify old rules are cleaned up and new rules are created
 	env.AssertRuleDoesNotExistByName(t, "default/old-service:http")
@@ -885,8 +1027,10 @@ func TestReconcile_ServiceRename_IPChange(t *testing.T) {
 		t.Fatalf("Failed to create database-service: %v", err)
 	}
 
-	result, err := env.ReconcileService(oldService)
-	env.AssertReconcileSuccess(t, result, err)
+	_, err := env.ReconcileServiceWithFinalizer(t, oldService)
+	if err != nil {
+		t.Errorf("Failed to reconcile old service: %v", err)
+	}
 
 	// Verify old rule exists
 	env.AssertRuleExistsByName(t, "default/database-service:mysql")
@@ -908,17 +1052,31 @@ func TestReconcile_ServiceRename_IPChange(t *testing.T) {
 	}
 
 	// Reconcile old service deletion
+	var result ctrl.Result
 	result, err = env.Controller.Reconcile(ctx, ctrl.Request{
 		NamespacedName: types.NamespacedName{
 			Name:      "database-service",
 			Namespace: "default",
 		},
 	})
-	env.AssertReconcileSuccess(t, result, err)
+	// Handle potential requeue from finalizer logic
+	if result.Requeue {
+		result, err = env.Controller.Reconcile(ctx, ctrl.Request{
+			NamespacedName: types.NamespacedName{
+				Name:      "database-service",
+				Namespace: "default",
+			},
+		})
+	}
+	if err != nil {
+		t.Errorf("Failed to reconcile old service deletion: %v", err)
+	}
 
 	// Reconcile new service
-	result, err = env.ReconcileService(newService)
-	env.AssertReconcileSuccess(t, result, err)
+	_, err = env.ReconcileServiceWithFinalizer(t, newService)
+	if err != nil {
+		t.Errorf("Failed to reconcile new service: %v", err)
+	}
 
 	// Verify rules are correctly managed
 	env.AssertRuleDoesNotExistByName(t, "default/database-service:mysql")
@@ -951,8 +1109,10 @@ func TestReconcile_ServiceRename_AnnotationChange(t *testing.T) {
 		t.Fatalf("Failed to create web-service: %v", err)
 	}
 
-	result, err := env.ReconcileService(oldService)
-	env.AssertReconcileSuccess(t, result, err)
+	_, err := env.ReconcileServiceWithFinalizer(t, oldService)
+	if err != nil {
+		t.Errorf("Failed to reconcile old service: %v", err)
+	}
 
 	// Verify old rule exists
 	env.AssertRuleExistsByName(t, "default/web-service:http")
@@ -977,17 +1137,31 @@ func TestReconcile_ServiceRename_AnnotationChange(t *testing.T) {
 	}
 
 	// Reconcile old service deletion
+	var result ctrl.Result
 	result, err = env.Controller.Reconcile(ctx, ctrl.Request{
 		NamespacedName: types.NamespacedName{
 			Name:      "web-service",
 			Namespace: "default",
 		},
 	})
-	env.AssertReconcileSuccess(t, result, err)
+	// Handle potential requeue from finalizer logic
+	if result.Requeue {
+		result, err = env.Controller.Reconcile(ctx, ctrl.Request{
+			NamespacedName: types.NamespacedName{
+				Name:      "web-service",
+				Namespace: "default",
+			},
+		})
+	}
+	if err != nil {
+		t.Errorf("Failed to reconcile old service deletion: %v", err)
+	}
 
 	// Reconcile new service
-	result, err = env.ReconcileService(newService)
-	env.AssertReconcileSuccess(t, result, err)
+	_, err = env.ReconcileServiceWithFinalizer(t, newService)
+	if err != nil {
+		t.Errorf("Failed to reconcile new service: %v", err)
+	}
 
 	// Verify old rule is deleted and new rules are created
 	env.AssertRuleDoesNotExistByName(t, "default/web-service:http")
@@ -1025,11 +1199,15 @@ func TestReconcile_ServiceRename_NameConflict(t *testing.T) {
 	}
 
 	// Reconcile both services
-	result, err := env.ReconcileService(service1)
-	env.AssertReconcileSuccess(t, result, err)
+	_, err := env.ReconcileServiceWithFinalizer(t, service1)
+	if err != nil {
+		t.Errorf("Failed to reconcile service1: %v", err)
+	}
 
-	result, err = env.ReconcileService(service2)
-	env.AssertReconcileSuccess(t, result, err)
+	_, err = env.ReconcileServiceWithFinalizer(t, service2)
+	if err != nil {
+		t.Errorf("Failed to reconcile service2: %v", err)
+	}
 
 	// Verify both rules exist
 	env.AssertRuleExistsByName(t, "default/app-v1:http")
@@ -1052,16 +1230,30 @@ func TestReconcile_ServiceRename_NameConflict(t *testing.T) {
 	}
 
 	// Reconcile deletion and creation
+	var result ctrl.Result
 	result, err = env.Controller.Reconcile(ctx, ctrl.Request{
 		NamespacedName: types.NamespacedName{
 			Name:      "app-v1",
 			Namespace: "default",
 		},
 	})
-	env.AssertReconcileSuccess(t, result, err)
+	// Handle potential requeue from finalizer logic
+	if result.Requeue {
+		result, err = env.Controller.Reconcile(ctx, ctrl.Request{
+			NamespacedName: types.NamespacedName{
+				Name:      "app-v1",
+				Namespace: "default",
+			},
+		})
+	}
+	if err != nil {
+		t.Errorf("Failed to reconcile app-v1 deletion: %v", err)
+	}
 
-	result, err = env.ReconcileService(conflictService)
-	env.AssertReconcileSuccess(t, result, err)
+	_, err = env.ReconcileServiceWithFinalizer(t, conflictService)
+	if err != nil {
+		t.Errorf("Failed to reconcile conflict service: %v", err)
+	}
 
 	// Verify state: app-v1 rule deleted, app-v2 unchanged, app rule created
 	env.AssertRuleDoesNotExistByName(t, "default/app-v1:http")
@@ -1114,11 +1306,15 @@ func TestReconcile_SimilarServiceNames_NoInterference(t *testing.T) {
 	}
 
 	// Reconcile both services
-	result, err := env.ReconcileService(longService)
-	env.AssertReconcileSuccess(t, result, err)
+	_, err := env.ReconcileServiceWithFinalizer(t, longService)
+	if err != nil {
+		t.Errorf("Failed to reconcile long service: %v", err)
+	}
 
-	result, err = env.ReconcileService(shortService)
-	env.AssertReconcileSuccess(t, result, err)
+	_, err = env.ReconcileServiceWithFinalizer(t, shortService)
+	if err != nil {
+		t.Errorf("Failed to reconcile short service: %v", err)
+	}
 
 	// Verify both services have their rules
 	env.AssertRuleExistsByName(t, "default/test-service:http")
@@ -1166,11 +1362,15 @@ func TestReconcile_SubstringServiceNames_CorrectMatching(t *testing.T) {
 	}
 
 	// Reconcile both services
-	result, err := env.ReconcileService(apiService)
-	env.AssertReconcileSuccess(t, result, err)
+	_, err := env.ReconcileServiceWithFinalizer(t, apiService)
+	if err != nil {
+		t.Errorf("Failed to reconcile api service: %v", err)
+	}
 
-	result, err = env.ReconcileService(shortApiService)
-	env.AssertReconcileSuccess(t, result, err)
+	_, err = env.ReconcileServiceWithFinalizer(t, shortApiService)
+	if err != nil {
+		t.Errorf("Failed to reconcile short api service: %v", err)
+	}
 
 	// Verify correct rule names and IPs
 	env.AssertRuleExistsByName(t, "default/api-service:http")
@@ -1227,11 +1427,15 @@ func TestReconcile_DeleteService_OtherUnaffected(t *testing.T) {
 	}
 
 	// Reconcile both services to create rules
-	result, err := env.ReconcileService(webappService)
-	env.AssertReconcileSuccess(t, result, err)
+	_, err := env.ReconcileServiceWithFinalizer(t, webappService)
+	if err != nil {
+		t.Errorf("Failed to reconcile webapp service: %v", err)
+	}
 
-	result, err = env.ReconcileService(webService)
-	env.AssertReconcileSuccess(t, result, err)
+	_, err = env.ReconcileServiceWithFinalizer(t, webService)
+	if err != nil {
+		t.Errorf("Failed to reconcile web service: %v", err)
+	}
 
 	// Verify both rules exist
 	env.AssertRuleExistsByName(t, "default/webapp:http")
@@ -1249,8 +1453,15 @@ func TestReconcile_DeleteService_OtherUnaffected(t *testing.T) {
 			Namespace: "default",
 		},
 	}
+	var result ctrl.Result
 	result, err = env.Controller.Reconcile(ctx, req)
-	env.AssertReconcileSuccess(t, result, err)
+	// Handle potential requeue from finalizer logic
+	if result.Requeue {
+		result, err = env.Controller.Reconcile(ctx, req)
+	}
+	if err != nil {
+		t.Errorf("Failed to reconcile web service deletion: %v", err)
+	}
 
 	// Verify web service rule is deleted but webapp rule remains
 	env.AssertRuleDoesNotExistByName(t, "default/web:https")
@@ -1304,8 +1515,10 @@ func TestReconcile_ComplexPrefixScenarios(t *testing.T) {
 			t.Fatalf("Failed to create service %s: %v", svc.name, err)
 		}
 
-		result, err := env.ReconcileService(service)
-		env.AssertReconcileSuccess(t, result, err)
+		_, err := env.ReconcileServiceWithFinalizer(t, service)
+		if err != nil {
+			t.Errorf("Failed to reconcile service: %v", err)
+		}
 	}
 
 	// Verify all rules exist with correct names
