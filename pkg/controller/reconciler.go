@@ -118,14 +118,22 @@ func (r *PortForwardReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		return ctrl.Result{}, nil
 	}
 
-	// Create change context for this reconciliation using synchronized state
-	serviceKey := fmt.Sprintf("%s/%s", service.Namespace, service.Name)
-	changeContext := r.detectChanges(ctx, service, serviceKey)
+	// Get current router state once per reconcile to ensure data consistency
+	currentRules, err := r.Router.ListAllPortForwards(ctx)
+	if err != nil {
+		logger.Error(err, "Failed to list current port forwards")
+		return ctrl.Result{}, err
+	}
 
-	// 🆕 Skip change detection during initial sync
+	// Create change context for this reconciliation using fresh router state
+	serviceKey := fmt.Sprintf("%s/%s", service.Namespace, service.Name)
+	changeContext := r.detectChanges(ctx, service, serviceKey, currentRules)
+
+	// Skip change processing during initial sync
 	if changeContext.IsInitialSync {
 		logger.Info("Skipping change processing during initial state synchronization")
-		changeContext.IsInitialSync = false
+		// changeContext.IsInitialSync = false
+		return ctrl.Result{}, nil
 	}
 
 	logger.Info("Checking for changes", "has_relevant", changeContext.HasRelevantChanges(), "ip_changed", changeContext.IPChanged, "annotation_changed", changeContext.AnnotationChanged, "spec_changed", changeContext.SpecChanged)
@@ -264,7 +272,7 @@ func (r *PortForwardReconciler) processAllChanges(ctx context.Context, service *
 		return nil, ctrl.Result{}, err
 	}
 
-	// Step 3: Calculate delta using unified algorithm
+	// Step 3: Calculate delta using unified algorithm with provided currentRules
 	operations := r.calculateDelta(currentRules, desiredConfigs, changeContext, service)
 
 	logger.Info("Calculated port operations",
@@ -448,12 +456,18 @@ func (r *PortForwardReconciler) syncRouterState(ctx context.Context) error {
 	return nil
 }
 
-// detectChanges determines what changes are needed using synchronized state
-func (r *PortForwardReconciler) detectChanges(ctx context.Context, service *corev1.Service, serviceKey string) *ChangeContext {
+// detectChanges determines what changes are needed using fresh router state
+func (r *PortForwardReconciler) detectChanges(ctx context.Context, service *corev1.Service, serviceKey string, allCurrentRules []*unifi.PortForward) *ChangeContext {
 	lbIP := helpers.GetLBIP(service)
 
-	// Get current rules for this service from internal map
-	currentRules := r.serviceRuleMap[serviceKey]
+	// Filter current rules for this specific service from fresh router data
+	var currentRules []*unifi.PortForward
+	servicePrefix := fmt.Sprintf("%s/%s:", service.Namespace, service.Name)
+	for _, rule := range allCurrentRules {
+		if strings.HasPrefix(rule.Name, servicePrefix) {
+			currentRules = append(currentRules, rule)
+		}
+	}
 
 	changeContext := &ChangeContext{
 		ServiceKey:       serviceKey,
