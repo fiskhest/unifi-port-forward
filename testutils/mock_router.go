@@ -99,7 +99,7 @@ func (r *MockRouter) AddPort(ctx context.Context, config routers.PortConfig) err
 }
 
 // CheckPort implements routers.Router.CheckPort
-func (r *MockRouter) CheckPort(ctx context.Context, port int) (*unifi.PortForward, bool, error) {
+func (r *MockRouter) CheckPort(ctx context.Context, port int, protocol string) (*unifi.PortForward, bool, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	r.callCount["CheckPort"]++
@@ -112,7 +112,7 @@ func (r *MockRouter) CheckPort(ctx context.Context, port int) (*unifi.PortForwar
 	portStr := strconv.Itoa(port)
 
 	for _, pf := range r.PortForwards {
-		if pf.DstPort == portStr {
+		if pf.DstPort == portStr && strings.EqualFold(pf.Proto, protocol) {
 			return &pf, true, nil
 		}
 	}

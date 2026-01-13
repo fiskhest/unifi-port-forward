@@ -75,7 +75,7 @@ func (router *UnifiRouter) withAuthRetry(ctx context.Context, operation string, 
 	return err
 }
 
-func (router *UnifiRouter) CheckPort(ctx context.Context, port int) (*unifi.PortForward, bool, error) {
+func (router *UnifiRouter) CheckPort(ctx context.Context, port int, protocol string) (*unifi.PortForward, bool, error) {
 	logger := ctrllog.FromContext(ctx)
 
 	var portforwards []unifi.PortForward
@@ -88,6 +88,7 @@ func (router *UnifiRouter) CheckPort(ctx context.Context, port int) (*unifi.Port
 		logger.Error(err, "Failed to list port forwards during CheckPort",
 			"site_id", router.SiteID,
 			"searched_port", port,
+			"protocol", protocol,
 		)
 		return &unifi.PortForward{}, false, err
 	}
@@ -100,19 +101,21 @@ func (router *UnifiRouter) CheckPort(ctx context.Context, port int) (*unifi.Port
 			continue
 		}
 
-		if portNum == port {
+		// Match both port and protocol to ensure we find the correct rule
+		if portNum == port && strings.EqualFold(portforward.Proto, protocol) {
 			logger.V(1).Info("Found matching port forward rule",
 				"port", port,
+				"protocol", protocol,
 				"rule_id", portforward.ID,
 				"rule_name", portforward.Name,
-				"destination_ip", portforward.Fwd,
-				"protocol", portforward.Proto)
+				"destination_ip", portforward.Fwd)
 			return &portforward, true, nil
 		}
 	}
 
 	logger.Info("Port forward rule not found",
 		"searched_port", port,
+		"protocol", protocol,
 		"total_rules_checked", len(portforwards),
 		"available_ports", router.getAvailablePorts(portforwards))
 
@@ -194,7 +197,7 @@ func (router *UnifiRouter) UpdatePort(ctx context.Context, port int, config Port
 		"config_enabled", config.Enabled,
 	)
 
-	pf, portExists, err := router.CheckPort(ctx, port)
+	pf, portExists, err := router.CheckPort(ctx, port, config.Protocol)
 	if err != nil {
 		logger.Error(err, "Failed to check port during update operation",
 			"port", port,
@@ -242,23 +245,13 @@ func (router *UnifiRouter) UpdatePort(ctx context.Context, port int, config Port
 		return retryErr
 	})
 	if err != nil {
-		// Check if this is a "not found" error and convert to create operation
-		if strings.Contains(strings.ToLower(err.Error()), "not found") {
-			logger.Info("UpdatePort API returned 'not found', converting to create operation",
-				"port", port,
-				"rule_id", pf.ID,
-				"error", err.Error())
-
-			// Create the rule instead of updating
-			return router.AddPort(ctx, config)
-		}
-
 		logger.Error(err, "Failed to update port forward rule via UniFi API",
 			"port", port,
+			"protocol", config.Protocol,
 			"rule_id", pf.ID,
 			"update_payload", portforward,
 		)
-		return fmt.Errorf("failed to update port forward rule for port %d: %w", port, err)
+		return fmt.Errorf("failed to update port forward rule for port %d (protocol %s): %w", port, config.Protocol, err)
 	}
 
 	logger.Info("Successfully updated port forward rule",
@@ -299,7 +292,7 @@ func (router *UnifiRouter) ListAllPortForwards(ctx context.Context) ([]*unifi.Po
 }
 
 func (router *UnifiRouter) RemovePort(ctx context.Context, config PortConfig) error {
-	pf, portExists, err := router.CheckPort(ctx, config.DstPort)
+	pf, portExists, err := router.CheckPort(ctx, config.DstPort, config.Protocol)
 	if err != nil {
 		return err
 	}

@@ -469,9 +469,9 @@ func (m *MockRouter) UpdatePort(ctx context.Context, externalPort int, config ro
 	return nil
 }
 
-func (m *MockRouter) CheckPort(ctx context.Context, port int) (*unifi.PortForward, bool, error) {
+func (m *MockRouter) CheckPort(ctx context.Context, port int, protocol string) (*unifi.PortForward, bool, error) {
 	for _, rule := range m.rules {
-		if rule.DstPort == string(rune(port)) {
+		if rule.DstPort == string(rune(port)) && strings.EqualFold(rule.Proto, protocol) {
 			return rule, true, nil
 		}
 	}

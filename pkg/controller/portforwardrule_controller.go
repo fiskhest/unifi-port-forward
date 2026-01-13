@@ -156,7 +156,7 @@ func (r *PortForwardRuleReconciler) reconcilePortForwardRule(ctx context.Context
 	}
 
 	// Check if rule already exists
-	existingRule, exists, err := r.Router.CheckPort(ctx, rule.Spec.ExternalPort)
+	existingRule, exists, err := r.Router.CheckPort(ctx, rule.Spec.ExternalPort, rule.Spec.Protocol)
 	if err != nil {
 		return fmt.Errorf("failed to check existing router rule: %w", err)
 	}

@@ -163,38 +163,10 @@ func runController(cmd *cobra.Command, args []string) error {
 		logger.Error(err, "Initial reconciliation sync failed, controller will use per-reconciliation syncs")
 		return fmt.Errorf("failed to perform initial sync: %w", err)
 	}
-	logger.Info("✅ Initial reconciliation sync completed")
 
 	// Check if PortForwardRule CRD is available
 	if helpers.IsPortForwardRuleCRDAvailable(context.Background(), mgr.GetClient()) {
-		logger.Info("PortForwardRule CRD detected, enabling PortForwardRule controller")
-
-		// Create PortForwardRule controller
-		ruleReconciler := &controller.PortForwardRuleReconciler{
-			Client:   mgr.GetClient(),
-			Scheme:   mgr.GetScheme(),
-			Router:   router,
-			Config:   &cfg,
-			Recorder: mgr.GetEventRecorderFor("portforwardrule-controller"),
-		}
-
-		// Setup PortForwardRule controller
-		if err := ruleReconciler.SetupWithManager(mgr); err != nil {
-			return fmt.Errorf("failed to setup PortForwardRule controller: %w", err)
-		}
-	} else {
-		logger.Info("PortForwardRule CRD not found, PortForwardRule controller disabled (annotation-based mode only)")
-	}
-
-	// Setup controller
-	// TODO: Fix initial sync integration after method resolution
-	if err := portforwardReconciler.SetupWithManager(mgr); err != nil {
-		return fmt.Errorf("failed to setup controller: %w", err)
-	}
-
-	// Check if PortForwardRule CRD is available
-	if helpers.IsPortForwardRuleCRDAvailable(context.Background(), mgr.GetClient()) {
-		logger.Info("PortForwardRule CRD detected, enabling PortForwardRule controller")
+		logger.Info("PortForwardRule CRD detected, enabling PortForwardRule CRD controller")
 
 		// Create PortForwardRule controller
 		ruleReconciler := &controller.PortForwardRuleReconciler{

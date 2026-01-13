@@ -81,9 +81,9 @@ func (r *PortForwardReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 
 	// Extract LoadBalancer IP once for the entire reconciliation
 	lbIP := helpers.GetLBIP(service)
-	logger.Info("Extracted LoadBalancer IP", "ip", lbIP, "len_ingress", len(service.Status.LoadBalancer.Ingress))
+	logger.V(1).Info("Extracted LoadBalancer IP", "ip", lbIP, "len_ingress", len(service.Status.LoadBalancer.Ingress))
 	if lbIP == "" {
-		logger.Info("Service has no LoadBalancer IP, skipping gracefully")
+		logger.V(1).Info("Service has no LoadBalancer IP, skipping gracefully")
 		return ctrl.Result{}, nil
 	}
 
@@ -92,7 +92,7 @@ func (r *PortForwardReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 
 	// Add finalizer if service needs management and doesn't have it
 	if shouldManage && !controllerutil.ContainsFinalizer(service, config.FinalizerLabel) {
-		logger.Info("Adding finalizer to managed service", "has_finalizer", false, "should_manage", shouldManage)
+		logger.Info("Adding finalizer to managed service", "has_finalizer", false, "should_manage", shouldManage, "ip", lbIP)
 		controllerutil.AddFinalizer(service, config.FinalizerLabel)
 		if err := r.Update(ctx, service); err != nil {
 			logger.Error(err, "Failed to add finalizer")
@@ -517,7 +517,7 @@ func (r *PortForwardReconciler) PerformInitialReconciliationSync(ctx context.Con
 	// Set version timestamp for refresh timing
 	r.mapVersion = time.Now().Unix()
 
-	logger.Info("✅ Initial reconciliation sync completed",
+	logger.Info("Initial reconciliation sync completed",
 		"total_rules", len(currentRules),
 		"service_mappings", len(r.serviceRuleMap),
 		"port_mappings", len(r.ruleOwnerMap))
@@ -555,7 +555,7 @@ func (r *PortForwardReconciler) refreshMaps(ctx context.Context) error {
 	// Update version timestamp
 	r.mapVersion = time.Now().Unix()
 
-	logger.Info("🔄 Periodic map refresh completed",
+	logger.Info("Periodic map refresh completed",
 		"updated_mappings", updatedCount,
 		"total_rules", len(currentRules))
 
