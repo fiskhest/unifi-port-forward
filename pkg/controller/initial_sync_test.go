@@ -71,10 +71,11 @@ func TestReconcile_EfficiencyImprovement(t *testing.T) {
 
 	t.Logf("Analysis - ListAllPortForwards calls: %d, AddPort calls: %d", listCount, addCount)
 
-	// Verify optimization: should have at most 3 calls (1 initial sync + up to 2 reconcile phases)
+	// Verify optimization: should have exactly 3 calls (1 initial sync + 2 reconciles)
+	// due to current rule sharing optimization, with 2nd reconcile for finalizer addition
 	// and at least 1 AddPort call for creating service rule
 	if listCount > 3 || addCount == 0 {
-		t.Errorf("Expected AddPort to be called during reconciliation with reasonable ListAllPortForwards calls, but got: ListAllPortForwards=%d, AddPort=%d", listCount, addCount)
+		t.Errorf("Expected AddPort to be called during reconciliation with optimized ListAllPortForwards calls, but got: ListAllPortForwards=%d, AddPort=%d", listCount, addCount)
 	}
 
 	// Additional verification: ensure service rule was actually created

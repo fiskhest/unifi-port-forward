@@ -31,10 +31,10 @@ func TestServiceChangePredicate_Delete(t *testing.T) {
 			shouldAllowDelete: true,
 		},
 		{
-			name:              "Service without finalizer should not be processed",
+			name:              "Service without finalizer should be processed (orphaned cleanup)",
 			hasFinalizer:      false,
 			hasAnnotation:     true,
-			shouldAllowDelete: false,
+			shouldAllowDelete: true,
 		},
 		{
 			name:              "Service with neither should not be processed",
@@ -83,7 +83,7 @@ func TestServiceChangePredicate_Delete(t *testing.T) {
 	}
 }
 
-// TestServiceChangePredicate_Delete_NonFinalized tests that services without finalizers are not processed
+// TestServiceChangePredicate_Delete_NonFinalized tests that services without finalizers but with annotations are processed (orphaned cleanup)
 func TestServiceChangePredicate_Delete_NonFinalized(t *testing.T) {
 	predicate := ServiceChangePredicate{}
 
@@ -97,13 +97,12 @@ func TestServiceChangePredicate_Delete_NonFinalized(t *testing.T) {
 			},
 		},
 	}
-
 	deleteEvent := event.DeleteEvent{
 		Object: service,
 	}
 
-	// Test that predicate does NOT allow the event
-	if predicate.Delete(deleteEvent) {
-		t.Error("Expected predicate to reject delete event for service without finalizer")
+	// Test that predicate DOES allow the event (for orphaned rule cleanup)
+	if !predicate.Delete(deleteEvent) {
+		t.Error("Expected predicate to allow delete event for service with annotation but no finalizer (orphaned cleanup)")
 	}
 }

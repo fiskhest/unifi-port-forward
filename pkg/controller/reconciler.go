@@ -144,8 +144,8 @@ func (r *PortForwardReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 			"annotation_changed", changeContext.AnnotationChanged,
 			"spec_changed", changeContext.SpecChanged)
 
-		// Use unified change processing
-		operations, result, err := r.processAllChanges(ctx, service, changeContext)
+		// Use unified change processing with shared currentRules
+		operations, result, err := r.processAllChanges(ctx, service, changeContext, currentRules)
 		if err != nil {
 			return result, err
 		}
@@ -250,7 +250,7 @@ func (r *PortForwardReconciler) shouldProcessService(ctx context.Context, servic
 }
 
 // processAllChanges handles the unified processing of all service changes
-func (r *PortForwardReconciler) processAllChanges(ctx context.Context, service *corev1.Service, changeContext *ChangeContext) ([]PortOperation, ctrl.Result, error) {
+func (r *PortForwardReconciler) processAllChanges(ctx context.Context, service *corev1.Service, changeContext *ChangeContext, currentRules []*unifi.PortForward) ([]PortOperation, ctrl.Result, error) {
 	logger := ctrllog.FromContext(ctx).WithValues(
 		"namespace", service.Namespace,
 		"name", service.Name,
@@ -265,14 +265,7 @@ func (r *PortForwardReconciler) processAllChanges(ctx context.Context, service *
 		return nil, ctrl.Result{}, err
 	}
 
-	// Step 2: Get current state from router
-	currentRules, err := r.Router.ListAllPortForwards(ctx)
-	if err != nil {
-		logger.Error(err, "Failed to list current port forwards")
-		return nil, ctrl.Result{}, err
-	}
-
-	// Step 3: Calculate delta using unified algorithm with provided currentRules
+	// Step 2: Calculate delta using unified algorithm with provided currentRules
 	operations := r.calculateDelta(currentRules, desiredConfigs, changeContext, service)
 
 	logger.Info("Calculated port operations",
@@ -346,29 +339,41 @@ func (r *PortForwardReconciler) handleFinalizerCleanup(ctx context.Context, serv
 	// Perform best-effort cleanup without annotation tracking (annotations not available during deletion)
 	cleanupErr := r.performBestEffortCleanup(ctx, service)
 
-	// Always remove finalizer after cleanup attempt, even if some rules failed to delete
-	// This prevents service deletion from hanging indefinitely
-	logger.Info("Removing finalizer after cleanup attempt")
-	controllerutil.RemoveFinalizer(service, config.FinalizerLabel)
-
-	if err := r.Update(ctx, service); err != nil {
-		logger.Error(err, "Failed to remove finalizer")
-		return ctrl.Result{}, err
+	// Refresh service object to ensure we have the latest resource version before removing finalizer
+	// This prevents conflicts and ensures finalizer removal works correctly
+	currentService := &corev1.Service{}
+	if err := r.Get(ctx, client.ObjectKey{Namespace: service.Namespace, Name: service.Name}, currentService); err != nil {
+		logger.Error(err, "Failed to refresh service object for finalizer removal")
+		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 	}
 
 	// Create event for visibility
 	eventMessage := fmt.Sprintf("Finalizer cleanup completed for service: %s", service.Name)
 	if cleanupErr != nil {
-		eventMessage = fmt.Sprintf("Finalizer cleanup completed with errors for service: %s - some rules may need manual cleanup", service.Name)
-		logger.Error(cleanupErr, "Cleanup completed with partial failures")
+		// Still remove finalizer even if cleanup failed to prevent deletion from hanging
+		logger.Info("Removing finalizer after cleanup attempt (cleanup had errors)")
+		controllerutil.RemoveFinalizer(currentService, config.FinalizerLabel)
+		if err := r.Update(ctx, currentService); err != nil {
+			logger.Error(err, "Failed to remove finalizer after cleanup errors")
+			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+		}
+		r.createEvent(ctx, currentService, "FinalizerCleanupCompleted", eventMessage)
+		logger.Info("Finalizer removed despite cleanup errors, service can now be deleted")
+		return ctrl.Result{}, nil
 	}
-	r.createEvent(ctx, service, "FinalizerCleanupCompleted", eventMessage)
+
+	// Remove finalizer after successful cleanup
+	logger.Info("Removing finalizer after successful cleanup")
+	controllerutil.RemoveFinalizer(currentService, config.FinalizerLabel)
+	if err := r.Update(ctx, currentService); err != nil {
+		logger.Error(err, "Failed to remove finalizer")
+		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+	}
+	r.createEvent(ctx, currentService, "FinalizerCleanupCompleted", eventMessage)
 
 	logger.Info("Finalizer cleanup completed, service can now be deleted")
 	return ctrl.Result{}, nil
 }
-
-// performBestEffortCleanup performs best-effort cleanup without retry logic during finalizer cleanup
 func (r *PortForwardReconciler) performBestEffortCleanup(ctx context.Context, service *corev1.Service) error {
 	logger := ctrllog.FromContext(ctx).WithValues("namespace", service.Namespace, "name", service.Name)
 	namespacedName := client.ObjectKey{Namespace: service.Namespace, Name: service.Name}
@@ -462,12 +467,34 @@ func (r *PortForwardReconciler) detectChanges(ctx context.Context, service *core
 
 	// Filter current rules for this specific service from fresh router data
 	var currentRules []*unifi.PortForward
-	servicePrefix := fmt.Sprintf("%s/%s:", service.Namespace, service.Name)
+	expectedServiceKey := fmt.Sprintf("%s/%s", service.Namespace, service.Name)
+
+	ctrllog.FromContext(ctx).Info("Detecting changes for service",
+		"expected_service_key", expectedServiceKey,
+		"total_router_rules", len(allCurrentRules))
+
 	for _, rule := range allCurrentRules {
-		if strings.HasPrefix(rule.Name, servicePrefix) {
-			currentRules = append(currentRules, rule)
+		// Extract service key from rule name (format: "namespace/service-name:port-name")
+		// Use same parsing logic as initial sync for consistency
+		parts := strings.SplitN(rule.Name, ":", 3)
+		if len(parts) >= 2 {
+			ruleServiceKey := parts[0] // parts[0] is "namespace/service-name"
+			ctrllog.FromContext(ctx).V(1).Info("Checking rule for service match",
+				"rule_name", rule.Name,
+				"rule_service_key", ruleServiceKey,
+				"expected_service_key", expectedServiceKey,
+				"matches", ruleServiceKey == expectedServiceKey)
+			if ruleServiceKey == expectedServiceKey {
+				currentRules = append(currentRules, rule)
+			}
 		}
 	}
+
+	ctrllog.FromContext(ctx).Info("Service rule filtering completed",
+		"service", service.Name,
+		"namespace", service.Namespace,
+		"matched_rules", len(currentRules),
+		"total_rules", len(allCurrentRules))
 
 	changeContext := &ChangeContext{
 		ServiceKey:       serviceKey,
@@ -484,7 +511,7 @@ func (r *PortForwardReconciler) detectChanges(ctx context.Context, service *core
 	}
 
 	// Perform comprehensive comparison for optimization
-	if r.portConfigsMatch(currentRules, desiredConfigs, lbIP) {
+	if r.portConfigsMatch(ctx, currentRules, desiredConfigs, lbIP) {
 		// No changes detected - skip processing
 		changeContext.IsInitialSync = false
 		return changeContext
@@ -700,7 +727,7 @@ func (r *PortForwardReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 // portConfigsMatch compares current router rules with desired configurations
 // Returns true if the states are identical, false if changes are needed
-func (r *PortForwardReconciler) portConfigsMatch(currentRules []*unifi.PortForward, desiredConfigs []routers.PortConfig, expectedIP string) bool {
+func (r *PortForwardReconciler) portConfigsMatch(ctx context.Context, currentRules []*unifi.PortForward, desiredConfigs []routers.PortConfig, expectedIP string) bool {
 	// Quick length check
 	if len(currentRules) != len(desiredConfigs) {
 		return false
@@ -723,8 +750,13 @@ func (r *PortForwardReconciler) portConfigsMatch(currentRules []*unifi.PortForwa
 			return false // Rule doesn't exist
 		}
 
-		// Compare critical fields
-		if current.DestinationIP != expectedIP {
+		// Compare critical fields - use Fwd (actual forward IP) not DestinationIP (source IP, always "any")
+		if current.Fwd != expectedIP {
+			ctrllog.FromContext(ctx).Info("IP mismatch detected in portConfigsMatch",
+				"rule_name", current.Name,
+				"current_fwd_ip", current.Fwd,
+				"current_dst_ip", current.DestinationIP,
+				"expected_service_ip", expectedIP)
 			return false // IP changed
 		}
 

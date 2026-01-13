@@ -59,7 +59,13 @@ func (ServiceChangePredicate) Delete(e event.DeleteEvent) bool {
 	}
 
 	// Process deletion if service has finalizer
-	return controllerutil.ContainsFinalizer(svc, config.FinalizerLabel)
+	if controllerutil.ContainsFinalizer(svc, config.FinalizerLabel) {
+		return true
+	}
+
+	// Also process if service had port forwarding annotation (cleanup for orphaned rules)
+	// This ensures cleanup happens even for services deleted before finalizer could be added
+	return hasPortForwardAnnotation(svc)
 }
 
 func (ServiceChangePredicate) Generic(e event.GenericEvent) bool {
