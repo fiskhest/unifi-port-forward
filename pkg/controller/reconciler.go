@@ -89,18 +89,21 @@ func (r *PortForwardReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 
 	// Check if service needs port forwarding and add finalizer if needed
 	shouldManage := r.shouldProcessService(ctx, service, lbIP)
+
+	// Add finalizer if service needs management and doesn't have it
 	if shouldManage && !controllerutil.ContainsFinalizer(service, config.FinalizerLabel) {
-		logger.Info("Adding finalizer to managed service")
+		logger.Info("Adding finalizer to managed service", "has_finalizer", false, "should_manage", shouldManage)
 		controllerutil.AddFinalizer(service, config.FinalizerLabel)
 		if err := r.Update(ctx, service); err != nil {
 			logger.Error(err, "Failed to add finalizer")
 			return ctrl.Result{}, err
 		}
+		return ctrl.Result{Requeue: true}, nil // Requeue to continue processing
 	}
 
-	// If service doesn't need management but has finalizer, remove it
+	// Remove finalizer if service no longer needs management
 	if !shouldManage && controllerutil.ContainsFinalizer(service, config.FinalizerLabel) {
-		logger.Info("Removing finalizer from non-managed service")
+		logger.Info("Removing finalizer from non-managed service", "should_manage", shouldManage, "has_finalizer", controllerutil.ContainsFinalizer(service, config.FinalizerLabel))
 		controllerutil.RemoveFinalizer(service, config.FinalizerLabel)
 		if err := r.Update(ctx, service); err != nil {
 			logger.Error(err, "Failed to remove finalizer")
@@ -109,8 +112,9 @@ func (r *PortForwardReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		return ctrl.Result{}, nil
 	}
 
-	if !shouldManage {
-		logger.V(1).Info("Service does not meet processing criteria")
+	// Early return for services that don't need management and don't have finalizers
+	if !shouldManage && !controllerutil.ContainsFinalizer(service, config.FinalizerLabel) {
+		logger.V(1).Info("Service does not meet processing criteria", "should_manage", shouldManage, "has_finalizer", controllerutil.ContainsFinalizer(service, config.FinalizerLabel))
 		return ctrl.Result{}, nil
 	}
 
@@ -123,6 +127,8 @@ func (r *PortForwardReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		logger.Info("Skipping change processing during initial state synchronization")
 		changeContext.IsInitialSync = false
 	}
+
+	logger.Info("Checking for changes", "has_relevant", changeContext.HasRelevantChanges(), "ip_changed", changeContext.IPChanged, "annotation_changed", changeContext.AnnotationChanged, "spec_changed", changeContext.SpecChanged)
 
 	if changeContext.HasRelevantChanges() {
 		logger.Info("Processing service changes",
@@ -278,7 +284,7 @@ func (r *PortForwardReconciler) processAllChanges(ctx context.Context, service *
 			}
 		}
 
-		return nil, ctrl.Result{}, err
+		return operations, ctrl.Result{}, err
 	}
 
 	logger.Info("Successfully processed service changes",
@@ -453,7 +459,6 @@ func (r *PortForwardReconciler) detectChanges(ctx context.Context, service *core
 		ServiceKey:       serviceKey,
 		ServiceNamespace: service.Namespace,
 		ServiceName:      service.Name,
-		IsInitialSync:    true, // Mark as initial sync
 	}
 
 	// Calculate desired state for optimization comparison
@@ -470,6 +475,16 @@ func (r *PortForwardReconciler) detectChanges(ctx context.Context, service *core
 		changeContext.IsInitialSync = false
 		return changeContext
 	}
+
+	// Changes detected - set appropriate flags
+	// For new services (no current rules), this is a spec change
+	if len(currentRules) == 0 && len(desiredConfigs) > 0 {
+		changeContext.SpecChanged = true
+	} else {
+		// For existing services, check what changed
+		return r.analyzeDetailedChanges(currentRules, desiredConfigs, lbIP, changeContext)
+	}
+
 	return changeContext
 }
 
@@ -519,7 +534,14 @@ func (r *PortForwardReconciler) needsMapRefresh() bool {
 
 // refreshMaps performs incremental updates to internal state maps
 func (r *PortForwardReconciler) refreshMaps(ctx context.Context) error {
-	logger := ctrllog.FromContext(ctx).WithValues("operation", "refresh_maps")
+	// Create a clean logger context with controller and component fields
+	// This prevents inheriting Service-specific fields when called from Reconcile()
+	baseLogger := ctrllog.FromContext(ctx)
+	logger := baseLogger.WithValues(
+		"controller", "port-forward-controller",
+		"component", "map-refresh",
+		"operation", "refresh_maps",
+	)
 
 	// Get current router state
 	currentRules, err := r.Router.ListAllPortForwards(ctx)
@@ -580,7 +602,11 @@ func (r *PortForwardReconciler) StartPeriodicRefresh(interval time.Duration) {
 			select {
 			case <-r.refreshTicker.C:
 				ctx := context.Background()
-				logger := ctrllog.FromContext(ctx).WithValues("operation", "periodic_refresh")
+				logger := ctrllog.FromContext(ctx).WithValues(
+					"controller", "port-forward-controller",
+					"component", "map-refresh",
+					"operation", "periodic_refresh",
+				)
 				if err := r.refreshMaps(ctx); err != nil {
 					logger.Error(err, "Periodic refresh failed")
 				}

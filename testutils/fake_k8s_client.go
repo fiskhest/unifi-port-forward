@@ -14,8 +14,8 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
-	"unifi-port-forwarder/pkg/config"
 	client "sigs.k8s.io/controller-runtime/pkg/client"
+	"unifi-port-forwarder/pkg/config"
 )
 
 // FakeKubernetesClient simulates Kubernetes operations for testing

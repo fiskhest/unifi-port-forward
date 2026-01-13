@@ -4,7 +4,6 @@ import (
 	"context"
 	"testing"
 
-	"github.com/filipowm/go-unifi/unifi"
 	"unifi-port-forwarder/pkg/config"
 
 	corev1 "k8s.io/api/core/v1"
