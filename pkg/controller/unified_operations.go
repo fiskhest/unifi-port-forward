@@ -213,6 +213,8 @@ func (r *PortForwardReconciler) executeOperations(ctx context.Context, operation
 			err = r.Router.RemovePort(ctx, op.Config)
 			if err == nil {
 				result.Deleted = append(result.Deleted, op.Config)
+				// Clean up port tracking to free the port for reuse
+				helpers.UnmarkPortUsed(op.Config.DstPort)
 			}
 		}
 

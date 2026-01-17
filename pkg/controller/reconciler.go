@@ -145,6 +145,13 @@ func (r *PortForwardReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	// Remove finalizer if service no longer needs management
 	if !shouldManage && controllerutil.ContainsFinalizer(service, config.FinalizerLabel) {
 		logger.Info("Removing finalizer from non-managed service", "should_manage", shouldManage, "has_finalizer", controllerutil.ContainsFinalizer(service, config.FinalizerLabel))
+
+		// Clean up port forward rules before removing finalizer
+		if err := r.finalizeService(ctx, service); err != nil {
+			logger.Error(err, "Failed to cleanup port forward rules during finalizer removal")
+			// Continue with finalizer removal even if cleanup fails
+		}
+
 		controllerutil.RemoveFinalizer(service, config.FinalizerLabel)
 		if err := r.Update(ctx, service); err != nil {
 			logger.Error(err, "Failed to remove finalizer")
