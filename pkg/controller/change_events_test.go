@@ -20,17 +20,10 @@ func TestPublishPortForwardTakenOwnershipEvent(t *testing.T) {
 		},
 	}
 
-	changeContext := &ChangeContext{
-		ServiceKey:       "default/test-service",
-		ServiceNamespace: "default",
-		ServiceName:      "test-service",
-	}
-
 	// Call method - should not panic and should handle nil recorder gracefully
 	eventPublisher.PublishPortForwardTakenOwnershipEvent(
 		context.Background(),
 		service,
-		changeContext,
 		"qbittorrent",              // oldRuleName
 		"default/test-service:tcp", // newRuleName
 		6881,                       // externalPort

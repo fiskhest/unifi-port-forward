@@ -70,27 +70,6 @@ func (c *ChangeContext) HasRelevantChanges() bool {
 	return c.IPChanged || c.AnnotationChanged || c.SpecChanged || c.DeletionChanged
 }
 
-// ErrorContext stores persistent error information for service
-type ErrorContext struct {
-	Timestamp            string                `json:"timestamp"`
-	LastFailureTime      string                `json:"last_failure_time"`
-	FailedPortOperations []FailedPortOperation `json:"failed_port_operations,omitempty"`
-	OverallStatus        string                `json:"overall_status"` // "success", "partial_failure", "complete_failure"
-	RetryCount           int                   `json:"retry_count"`
-	LastErrorCode        string                `json:"last_error_code,omitempty"`
-	LastErrorMessage     string                `json:"last_error_message,omitempty"`
-}
-
-// FailedPortOperation details a specific failed port operation
-type FailedPortOperation struct {
-	PortMapping  string `json:"port_mapping"`
-	ExternalPort int    `json:"external_port"`
-	Protocol     string `json:"protocol"`
-	ErrorType    string `json:"error_type"` // "conflict", "router_error", "validation_error"
-	ErrorMessage string `json:"error_message"`
-	Timestamp    string `json:"timestamp"`
-}
-
 // analyzeChanges performs granular analysis of what changed between old and new service
 func analyzeChanges(oldSvc, newSvc *corev1.Service) *ChangeContext {
 	context := &ChangeContext{

@@ -174,7 +174,7 @@ func (r *PortForwardReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 				if op.Reason == "port_conflict_take_ownership" {
 					oldRuleName := op.ExistingRule.Name
 					newRuleName := op.Config.Name
-					r.EventPublisher.PublishPortForwardTakenOwnershipEvent(ctx, service, changeContext,
+					r.EventPublisher.PublishPortForwardTakenOwnershipEvent(ctx, service,
 						oldRuleName, newRuleName, op.Config.DstPort, op.Config.Protocol)
 				}
 			}
@@ -243,7 +243,7 @@ func (r *PortForwardReconciler) processAllChanges(ctx context.Context, service *
 		// Publish failure events
 		if r.EventPublisher != nil {
 			for _, failedErr := range result.Failed {
-				r.EventPublisher.PublishPortForwardFailedEvent(ctx, service, changeContext,
+				r.EventPublisher.PublishPortForwardFailedEvent(ctx, service,
 					"", "", "", 0, "", "OperationFailed", failedErr)
 			}
 		}
@@ -271,7 +271,7 @@ func (r *PortForwardReconciler) processAllChanges(ctx context.Context, service *
 	if r.EventPublisher != nil && len(result.Created) > 0 {
 		for _, created := range result.Created {
 			lbIP := helpers.GetLBIP(service)
-			r.EventPublisher.PublishPortForwardCreatedEvent(ctx, service, changeContext,
+			r.EventPublisher.PublishPortForwardCreatedEvent(ctx, service,
 				fmt.Sprintf("%d:%d", created.DstPort, created.FwdPort),
 				lbIP, created.DstIP, created.DstPort, created.Protocol, "RulesCreatedSuccessfully")
 		}
@@ -279,14 +279,14 @@ func (r *PortForwardReconciler) processAllChanges(ctx context.Context, service *
 		// Publish update events
 		for _, updated := range result.Updated {
 			lbIP := helpers.GetLBIP(service)
-			r.EventPublisher.PublishPortForwardUpdatedEvent(ctx, service, changeContext,
+			r.EventPublisher.PublishPortForwardUpdatedEvent(ctx, service,
 				fmt.Sprintf("%d:%d", updated.DstPort, updated.FwdPort),
 				lbIP, updated.DstIP, updated.DstPort, updated.Protocol, "RulesUpdatedSuccessfully")
 		}
 
 		// Publish deletion events
 		for _, deleted := range result.Deleted {
-			r.EventPublisher.PublishPortForwardDeletedEvent(ctx, service, changeContext,
+			r.EventPublisher.PublishPortForwardDeletedEvent(ctx, service,
 				fmt.Sprintf("%d:%d", deleted.DstPort, deleted.FwdPort),
 				deleted.DstPort, deleted.Protocol, "RulesDeletedSuccessfully")
 		}

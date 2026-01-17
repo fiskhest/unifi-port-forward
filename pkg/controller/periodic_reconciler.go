@@ -168,7 +168,7 @@ func (r *PeriodicReconciler) performFullReconciliation(ctx context.Context, star
 
 			// Publish drift detected event
 			if r.eventPublisher != nil {
-				r.eventPublisher.PublishDriftDetectedEvent(ctx, service, nil, analysis)
+				r.eventPublisher.PublishDriftDetectedEvent(ctx, service, analysis)
 			}
 
 			if err := r.correctServiceDrift(ctx, analysis); err != nil {
@@ -177,7 +177,7 @@ func (r *PeriodicReconciler) performFullReconciliation(ctx context.Context, star
 
 				// Publish failure event
 				if r.eventPublisher != nil {
-					r.eventPublisher.PublishDriftCorrectionFailedEvent(ctx, service, nil, analysis, err)
+					r.eventPublisher.PublishDriftCorrectionFailedEvent(ctx, service, analysis, err)
 				}
 
 				// Publish periodic reconciliation completed event for this service (failure) - ONLY when drift existed
@@ -191,7 +191,7 @@ func (r *PeriodicReconciler) performFullReconciliation(ctx context.Context, star
 
 				// Publish success event
 				if r.eventPublisher != nil {
-					r.eventPublisher.PublishDriftCorrectedEvent(ctx, service, nil, analysis)
+					r.eventPublisher.PublishDriftCorrectedEvent(ctx, service, analysis)
 				}
 
 				// Publish periodic reconciliation completed event for this service (success) - ONLY when drift existed

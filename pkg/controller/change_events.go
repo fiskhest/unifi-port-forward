@@ -51,7 +51,7 @@ func NewEventPublisher(client client.Client, recorder record.EventRecorder, sche
 	}
 }
 
-func (ep *EventPublisher) PublishPortForwardCreatedEvent(ctx context.Context, service *corev1.Service, changeContext *ChangeContext, portMapping, externalIP, internalIP string, externalPort int, protocol, reason string) {
+func (ep *EventPublisher) PublishPortForwardCreatedEvent(ctx context.Context, service *corev1.Service, portMapping, externalIP, internalIP string, externalPort int, protocol, reason string) {
 	logger := ctrllog.FromContext(ctx).WithValues("service", service.Name, "namespace", service.Namespace)
 
 	eventData := &PortForwardEventData{
@@ -69,7 +69,7 @@ func (ep *EventPublisher) PublishPortForwardCreatedEvent(ctx context.Context, se
 
 	message := fmt.Sprintf("Created port forward rule: %s service: %s", eventData.Message, service.Name)
 
-	if err := ep.createEvent(ctx, service, EventPortForwardCreated, message, eventData, changeContext); err != nil {
+	if err := ep.createEvent(ctx, service, EventPortForwardCreated, message, eventData); err != nil {
 		logger.Error(err, "Failed to publish PortForwardCreated event")
 		return
 	}
@@ -77,7 +77,7 @@ func (ep *EventPublisher) PublishPortForwardCreatedEvent(ctx context.Context, se
 	logger.V(1).Info("Published PortForwardCreated event", "port_mapping", portMapping, "external_port", externalPort)
 }
 
-func (ep *EventPublisher) PublishPortForwardUpdatedEvent(ctx context.Context, service *corev1.Service, changeContext *ChangeContext, portMapping, externalIP, internalIP string, externalPort int, protocol, reason string) {
+func (ep *EventPublisher) PublishPortForwardUpdatedEvent(ctx context.Context, service *corev1.Service, portMapping, externalIP, internalIP string, externalPort int, protocol, reason string) {
 	logger := ctrllog.FromContext(ctx).WithValues("service", service.Name, "namespace", service.Namespace)
 
 	eventData := &PortForwardEventData{
@@ -95,7 +95,7 @@ func (ep *EventPublisher) PublishPortForwardUpdatedEvent(ctx context.Context, se
 
 	message := fmt.Sprintf("Updated port forward rule: %s service: %s", eventData.Message, service.Name)
 
-	if err := ep.createEvent(ctx, service, EventPortForwardUpdated, message, eventData, changeContext); err != nil {
+	if err := ep.createEvent(ctx, service, EventPortForwardUpdated, message, eventData); err != nil {
 		logger.Error(err, "Failed to publish PortForwardUpdated event")
 		return
 	}
@@ -103,7 +103,7 @@ func (ep *EventPublisher) PublishPortForwardUpdatedEvent(ctx context.Context, se
 	logger.V(1).Info("Published PortForwardUpdated event", "port_mapping", portMapping, "external_port", externalPort)
 }
 
-func (ep *EventPublisher) PublishPortForwardDeletedEvent(ctx context.Context, service *corev1.Service, changeContext *ChangeContext, portMapping string, externalPort int, protocol, reason string) {
+func (ep *EventPublisher) PublishPortForwardDeletedEvent(ctx context.Context, service *corev1.Service, portMapping string, externalPort int, protocol, reason string) {
 	logger := ctrllog.FromContext(ctx).WithValues("service", service.Name, "namespace", service.Namespace)
 
 	eventData := &PortForwardEventData{
@@ -119,7 +119,7 @@ func (ep *EventPublisher) PublishPortForwardDeletedEvent(ctx context.Context, se
 
 	message := fmt.Sprintf("Deleted port forward rule: %s service: %s", eventData.Message, service.Name)
 
-	if err := ep.createEvent(ctx, service, EventPortForwardDeleted, message, eventData, changeContext); err != nil {
+	if err := ep.createEvent(ctx, service, EventPortForwardDeleted, message, eventData); err != nil {
 		logger.Error(err, "Failed to publish PortForwardDeleted event")
 		return
 	}
@@ -127,7 +127,7 @@ func (ep *EventPublisher) PublishPortForwardDeletedEvent(ctx context.Context, se
 	logger.V(1).Info("Published PortForwardDeleted event", "port_mapping", portMapping, "external_port", externalPort)
 }
 
-func (ep *EventPublisher) PublishPortForwardFailedEvent(ctx context.Context, service *corev1.Service, changeContext *ChangeContext, portMapping, externalIP, internalIP string, externalPort int, protocol, reason string, err error) {
+func (ep *EventPublisher) PublishPortForwardFailedEvent(ctx context.Context, service *corev1.Service, portMapping, externalIP, internalIP string, externalPort int, protocol, reason string, err error) {
 	logger := ctrllog.FromContext(ctx).WithValues("service", service.Name, "namespace", service.Namespace)
 
 	errorMsg := ""
@@ -154,7 +154,7 @@ func (ep *EventPublisher) PublishPortForwardFailedEvent(ctx context.Context, ser
 		message += fmt.Sprintf(" - Error: %s", err.Error())
 	}
 
-	if createErr := ep.createEvent(ctx, service, EventPortForwardFailed, message, eventData, changeContext); createErr != nil {
+	if createErr := ep.createEvent(ctx, service, EventPortForwardFailed, message, eventData); createErr != nil {
 		logger.Error(createErr, "Failed to publish PortForwardFailed event")
 		return
 	}
@@ -162,16 +162,10 @@ func (ep *EventPublisher) PublishPortForwardFailedEvent(ctx context.Context, ser
 	logger.V(1).Info("Published PortForwardFailed event", "port_mapping", portMapping, "reason", reason)
 }
 
-func (ep *EventPublisher) createEvent(ctx context.Context, service *corev1.Service, eventType, message string, eventData *PortForwardEventData, changeContext *ChangeContext) error {
+func (ep *EventPublisher) createEvent(ctx context.Context, service *corev1.Service, eventType, message string, eventData *PortForwardEventData) error {
 	logger := ctrllog.FromContext(ctx)
 
 	annotations := map[string]string{}
-	if changeContext != nil {
-		if contextJSON, err := json.Marshal(changeContext); err == nil {
-			annotations["unifi-port-forwarder/change-context"] = string(contextJSON)
-		}
-	}
-
 	if eventDataJSON, err := json.Marshal(eventData); err == nil {
 		annotations["unifi-port-forwarder/event-data"] = string(eventDataJSON)
 	}
@@ -199,7 +193,7 @@ func (ep *EventPublisher) createEvent(ctx context.Context, service *corev1.Servi
 	return nil
 }
 
-func (ep *EventPublisher) PublishPortForwardTakenOwnershipEvent(ctx context.Context, service *corev1.Service, changeContext *ChangeContext, oldRuleName, newRuleName string, externalPort int, protocol string) {
+func (ep *EventPublisher) PublishPortForwardTakenOwnershipEvent(ctx context.Context, service *corev1.Service, oldRuleName, newRuleName string, externalPort int, protocol string) {
 	logger := ctrllog.FromContext(ctx).WithValues("service", service.Name, "namespace", service.Namespace)
 
 	eventData := &PortForwardEventData{
@@ -216,7 +210,7 @@ func (ep *EventPublisher) PublishPortForwardTakenOwnershipEvent(ctx context.Cont
 	message := fmt.Sprintf("Took ownership of existing port forward rule: %s service: %s - renamed from '%s' to '%s'",
 		eventData.Message, service.Name, oldRuleName, newRuleName)
 
-	if err := ep.createEvent(ctx, service, EventPortForwardTakenOwnership, message, eventData, changeContext); err != nil {
+	if err := ep.createEvent(ctx, service, EventPortForwardTakenOwnership, message, eventData); err != nil {
 		logger.Error(err, "Failed to publish PortForwardTakenOwnership event")
 	} else {
 		logger.Info("Published PortForwardTakenOwnership event",
@@ -225,7 +219,7 @@ func (ep *EventPublisher) PublishPortForwardTakenOwnershipEvent(ctx context.Cont
 }
 
 // PublishDriftDetectedEvent publishes an event when drift is detected for a service
-func (ep *EventPublisher) PublishDriftDetectedEvent(ctx context.Context, service *corev1.Service, changeContext *ChangeContext, analysis *DriftAnalysis) {
+func (ep *EventPublisher) PublishDriftDetectedEvent(ctx context.Context, service *corev1.Service, analysis *DriftAnalysis) {
 	logger := ctrllog.FromContext(ctx).WithValues("service", service.Name, "namespace", service.Namespace)
 
 	eventData := &PortForwardEventData{
@@ -239,13 +233,13 @@ func (ep *EventPublisher) PublishDriftDetectedEvent(ctx context.Context, service
 
 	message := fmt.Sprintf("Drift detected for service %s/%s - corrective actions will be taken", service.Namespace, service.Name)
 
-	if err := ep.createEvent(ctx, service, EventDriftDetected, message, eventData, changeContext); err != nil {
+	if err := ep.createEvent(ctx, service, EventDriftDetected, message, eventData); err != nil {
 		logger.Error(err, "Failed to publish DriftDetected event")
 	}
 }
 
 // PublishDriftCorrectedEvent publishes an event when drift is successfully corrected for a service
-func (ep *EventPublisher) PublishDriftCorrectedEvent(ctx context.Context, service *corev1.Service, changeContext *ChangeContext, analysis *DriftAnalysis) {
+func (ep *EventPublisher) PublishDriftCorrectedEvent(ctx context.Context, service *corev1.Service, analysis *DriftAnalysis) {
 	logger := ctrllog.FromContext(ctx).WithValues("service", service.Name, "namespace", service.Namespace)
 
 	eventData := &PortForwardEventData{
@@ -259,13 +253,13 @@ func (ep *EventPublisher) PublishDriftCorrectedEvent(ctx context.Context, servic
 
 	message := fmt.Sprintf("Drift corrected for service %s/%s", service.Namespace, service.Name)
 
-	if err := ep.createEvent(ctx, service, EventDriftCorrected, message, eventData, changeContext); err != nil {
+	if err := ep.createEvent(ctx, service, EventDriftCorrected, message, eventData); err != nil {
 		logger.Error(err, "Failed to publish DriftCorrected event")
 	}
 }
 
 // PublishDriftCorrectionFailedEvent publishes an event when drift correction fails for a service
-func (ep *EventPublisher) PublishDriftCorrectionFailedEvent(ctx context.Context, service *corev1.Service, changeContext *ChangeContext, analysis *DriftAnalysis, err error) {
+func (ep *EventPublisher) PublishDriftCorrectionFailedEvent(ctx context.Context, service *corev1.Service, analysis *DriftAnalysis, err error) {
 	logger := ctrllog.FromContext(ctx).WithValues("service", service.Name, "namespace", service.Namespace)
 
 	eventData := &PortForwardEventData{
@@ -279,7 +273,7 @@ func (ep *EventPublisher) PublishDriftCorrectionFailedEvent(ctx context.Context,
 
 	message := fmt.Sprintf("Failed to correct drift for service %s/%s - %s", service.Namespace, service.Name, err.Error())
 
-	if createErr := ep.createEvent(ctx, service, EventPortForwardFailed, message, eventData, changeContext); createErr != nil {
+	if createErr := ep.createEvent(ctx, service, EventPortForwardFailed, message, eventData); createErr != nil {
 		logger.Error(createErr, "Failed to publish DriftCorrectionFailed event")
 	} else {
 		logger.Info("Published DriftCorrectionFailed event", "service", service.Name, "error", err.Error())
@@ -303,7 +297,7 @@ func (ep *EventPublisher) PublishServicePeriodicReconciliationCompletedEvent(ctx
 	message := fmt.Sprintf("Periodic reconciliation completed for service %s/%s - drift detected: %t, rules corrected: %d, failed: %d",
 		service.Namespace, service.Name, hasDrift, correctedRules, failedOperations)
 
-	if err := ep.createEvent(ctx, service, EventServicePeriodicReconciliationCompleted, message, eventData, nil); err != nil {
+	if err := ep.createEvent(ctx, service, EventServicePeriodicReconciliationCompleted, message, eventData); err != nil {
 		logger.Error(err, "Failed to publish ServicePeriodicReconciliationCompleted event")
 	} else {
 		logger.V(1).Info("Published ServicePeriodicReconciliationCompleted event",

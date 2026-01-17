@@ -15,7 +15,7 @@ The controller does not delete other rules (as long as they don't use conflictin
 - Support for multiple rules per service
 - Publishes events on changes to each service object
 - Periodic reconciliation for drift detection of remote rules
-- Additional error or change-context annotated on relevant service object(s)
+- Event data included in Kubernetes events for debugging and observability
 - Detailed error handling and logging on the controller pod
 - Graceful service deletion with finalizer-based cleanup
 

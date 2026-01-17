@@ -293,52 +293,6 @@ func (h *EventTestHelper) ExtractEventData(event corev1.Event) (*PortForwardEven
 	return &eventData, nil
 }
 
-func (h *EventTestHelper) ExtractChangeContext(event corev1.Event) (*ChangeContext, error) {
-	if event.Annotations == nil {
-		return nil, fmt.Errorf("event has no annotations")
-	}
-
-	contextStr := event.Annotations["unifi-port-forwarder/change-context"]
-	if contextStr == "" {
-		return nil, fmt.Errorf("event has no change-context annotation")
-	}
-
-	var context ChangeContext
-	if err := json.Unmarshal([]byte(contextStr), &context); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal change context: %w", err)
-	}
-
-	return &context, nil
-}
-
-func (h *EventTestHelper) VerifyEventCorrelation(event corev1.Event, expectedChangeContext *ChangeContext) {
-	if expectedChangeContext == nil {
-		return
-	}
-
-	changeContext, err := h.ExtractChangeContext(event)
-	if err != nil {
-		h.T.Errorf("Failed to extract change context from event: %v", err)
-		return
-	}
-
-	if changeContext.ServiceKey != expectedChangeContext.ServiceKey {
-		h.T.Errorf("Expected service key %s, got %s", expectedChangeContext.ServiceKey, changeContext.ServiceKey)
-	}
-
-	if changeContext.IPChanged != expectedChangeContext.IPChanged {
-		h.T.Errorf("Expected IP changed %t, got %t", expectedChangeContext.IPChanged, changeContext.IPChanged)
-	}
-
-	if changeContext.AnnotationChanged != expectedChangeContext.AnnotationChanged {
-		h.T.Errorf("Expected annotation changed %t, got %t", expectedChangeContext.AnnotationChanged, changeContext.AnnotationChanged)
-	}
-
-	if changeContext.SpecChanged != expectedChangeContext.SpecChanged {
-		h.T.Errorf("Expected spec changed %t, got %t", expectedChangeContext.SpecChanged, changeContext.SpecChanged)
-	}
-}
-
 func (h *EventTestHelper) ClearEvents() {
 	h.Recorder.Clear()
 }

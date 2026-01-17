@@ -228,7 +228,7 @@ func (router *UnifiRouter) UpdatePort(ctx context.Context, port int, config Port
 	portforward := &unifi.PortForward{
 		ID:            pf.ID,
 		SiteID:        router.SiteID,
-		DestinationIP: "any",
+		DestinationIP: pf.DestinationIP, // Preserve existing source filter
 		Enabled:       config.Enabled,
 		Fwd:           config.DstIP,
 		FwdPort:       strconv.Itoa(config.FwdPort),
@@ -236,7 +236,7 @@ func (router *UnifiRouter) UpdatePort(ctx context.Context, port int, config Port
 		Name:          config.Name,
 		PfwdInterface: config.Interface,
 		Proto:         config.Protocol,
-		Src:           "any",
+		Src:           pf.Src, // Preserve existing source filter
 	}
 
 	var result *unifi.PortForward
