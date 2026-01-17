@@ -805,7 +805,7 @@ func TestReconcile_RouterCommunication_Failures(t *testing.T) {
 
 	// Check what operations were attempted
 	ops = env.MockRouter.GetOperationCounts()
-	t.Logf("DEBUG: Operation counts after reconcile: %+v", ops)
+	t.Logf("Operation counts after reconcile: %+v", ops)
 
 	// Current behavior: cleanup may not fail as expected
 	if err != nil {

@@ -249,7 +249,7 @@ func (r *PeriodicReconciler) correctServiceDrift(ctx context.Context, analysis *
 				Name:      extraRule.Name,
 				DstPort:   r.parseIntField(extraRule.DstPort),
 				FwdPort:   r.parseIntField(extraRule.FwdPort),
-				DstIP:     extraRule.DestinationIP,
+				DstIP:     extraRule.Fwd,
 				Protocol:  extraRule.Proto,
 				Enabled:   extraRule.Enabled,
 				Interface: extraRule.PfwdInterface,

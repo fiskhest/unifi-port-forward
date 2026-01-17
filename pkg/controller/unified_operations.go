@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"unifi-port-forwarder/pkg/config"
 	"unifi-port-forwarder/pkg/helpers"
@@ -135,7 +136,7 @@ func (r *PortForwardReconciler) calculateDelta(currentRules []*unifi.PortForward
 					Name:      rule.Name,
 					DstPort:   dstPort,
 					FwdPort:   strToInt(rule.FwdPort),
-					DstIP:     rule.DestinationIP,
+					DstIP:     rule.Fwd,
 					Protocol:  rule.Proto,
 					Enabled:   rule.Enabled,
 					Interface: rule.PfwdInterface,
@@ -280,6 +281,21 @@ func (r *PortForwardReconciler) rollbackOperations(ctx context.Context, operatio
 					SrcIP:     op.ExistingRule.Src,
 				}
 				err = r.Router.UpdatePort(ctx, op.Config.DstPort, rollbackConfig)
+				// If UpdatePort fails with "not found", convert to CREATE instead
+				if err != nil && strings.Contains(err.Error(), "not found") {
+					// Try to create the rule instead of updating
+					createConfig := routers.PortConfig{
+						Name:      op.Config.Name,
+						DstPort:   op.Config.DstPort,
+						FwdPort:   op.Config.FwdPort,
+						DstIP:     op.Config.DstIP,
+						Protocol:  op.Config.Protocol,
+						Enabled:   op.Config.Enabled,
+						Interface: "wan", // Use default interface
+						SrcIP:     "any", // Use default source
+					}
+					err = r.Router.AddPort(ctx, createConfig)
+				}
 			}
 		case OpDelete:
 			// Deleted operation -> rollback by creating

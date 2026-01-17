@@ -133,7 +133,7 @@ func (r *MockRouter) RemovePort(ctx context.Context, config routers.PortConfig) 
 
 	portStr := strconv.Itoa(config.DstPort)
 	for i, pf := range r.PortForwards {
-		if pf.DstPort == portStr && pf.DestinationIP == config.DstIP {
+		if pf.DstPort == portStr && pf.Fwd == config.DstIP {
 			// Remove the matching rule
 			r.PortForwards = append(r.PortForwards[:i], r.PortForwards[i+1:]...)
 			return nil

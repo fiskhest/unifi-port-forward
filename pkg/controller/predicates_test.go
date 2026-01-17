@@ -200,6 +200,7 @@ func TestServiceChangePredicate_Update_WithDeletion(t *testing.T) {
 					Annotations: map[string]string{
 						config.FilterAnnotation: "8080:http",
 					},
+					Finalizers: []string{config.FinalizerLabel},
 				},
 				Spec: corev1.ServiceSpec{
 					Ports: []corev1.ServicePort{{Name: "http", Port: 80, Protocol: corev1.ProtocolTCP}},
@@ -210,6 +211,7 @@ func TestServiceChangePredicate_Update_WithDeletion(t *testing.T) {
 					Name:              "test-service",
 					Namespace:         "default",
 					Annotations:       map[string]string{config.FilterAnnotation: "8080:http"},
+					Finalizers:        []string{config.FinalizerLabel},
 					DeletionTimestamp: &metav1.Time{Time: time.Now()},
 				},
 				Spec: corev1.ServiceSpec{

@@ -187,8 +187,10 @@ func (env *ControllerTestEnv) ReconcileServiceWithFinalizer(t *testing.T, servic
 		if !reflect.DeepEqual(result, ctrl.Result{}) {
 			t.Errorf("Expected empty result after finalizer addition, got: %+v", result)
 		}
-	} else if !reflect.DeepEqual(result, ctrl.Result{}) {
-		t.Errorf("Expected empty result (no requeue), got: %+v", result)
+	} else {
+		if !reflect.DeepEqual(result, ctrl.Result{}) {
+			t.Errorf("Expected empty result (no requeue), got: %+v", result)
+		}
 	}
 
 	return result, err

@@ -53,7 +53,6 @@ func NewEventPublisher(client client.Client, recorder record.EventRecorder, sche
 
 func (ep *EventPublisher) PublishPortForwardCreatedEvent(ctx context.Context, service *corev1.Service, changeContext *ChangeContext, portMapping, externalIP, internalIP string, externalPort int, protocol, reason string) {
 	logger := ctrllog.FromContext(ctx).WithValues("service", service.Name, "namespace", service.Namespace)
-	logger.V(1).Info("DEBUG: PublishPortForwardCreatedEvent called for service", "namespace", service.Namespace, "service", service.Name)
 
 	eventData := &PortForwardEventData{
 		ServiceKey:       fmt.Sprintf("%s/%s", service.Namespace, service.Name),
@@ -70,14 +69,12 @@ func (ep *EventPublisher) PublishPortForwardCreatedEvent(ctx context.Context, se
 
 	message := fmt.Sprintf("Created port forward rule: %s service: %s", eventData.Message, service.Name)
 
-	logger.V(1).Info("DEBUG: About to call createEvent")
 	if err := ep.createEvent(ctx, service, EventPortForwardCreated, message, eventData, changeContext); err != nil {
-		logger.V(1).Info("DEBUG: createEvent returned error", "error", err)
 		logger.Error(err, "Failed to publish PortForwardCreated event")
-	} else {
-		logger.V(1).Info("DEBUG: createEvent succeeded")
-		logger.V(1).Info("Published PortForwardCreated event", "port_mapping", portMapping, "external_port", externalPort)
+		return
 	}
+
+	logger.V(1).Info("Published PortForwardCreated event", "port_mapping", portMapping, "external_port", externalPort)
 }
 
 func (ep *EventPublisher) PublishPortForwardUpdatedEvent(ctx context.Context, service *corev1.Service, changeContext *ChangeContext, portMapping, externalIP, internalIP string, externalPort int, protocol, reason string) {
@@ -100,9 +97,10 @@ func (ep *EventPublisher) PublishPortForwardUpdatedEvent(ctx context.Context, se
 
 	if err := ep.createEvent(ctx, service, EventPortForwardUpdated, message, eventData, changeContext); err != nil {
 		logger.Error(err, "Failed to publish PortForwardUpdated event")
-	} else {
-		logger.V(1).Info("Published PortForwardUpdated event", "port_mapping", portMapping, "external_port", externalPort)
+		return
 	}
+
+	logger.V(1).Info("Published PortForwardUpdated event", "port_mapping", portMapping, "external_port", externalPort)
 }
 
 func (ep *EventPublisher) PublishPortForwardDeletedEvent(ctx context.Context, service *corev1.Service, changeContext *ChangeContext, portMapping string, externalPort int, protocol, reason string) {
@@ -123,9 +121,10 @@ func (ep *EventPublisher) PublishPortForwardDeletedEvent(ctx context.Context, se
 
 	if err := ep.createEvent(ctx, service, EventPortForwardDeleted, message, eventData, changeContext); err != nil {
 		logger.Error(err, "Failed to publish PortForwardDeleted event")
-	} else {
-		logger.V(1).Info("Published PortForwardDeleted event", "port_mapping", portMapping, "external_port", externalPort)
+		return
 	}
+
+	logger.V(1).Info("Published PortForwardDeleted event", "port_mapping", portMapping, "external_port", externalPort)
 }
 
 func (ep *EventPublisher) PublishPortForwardFailedEvent(ctx context.Context, service *corev1.Service, changeContext *ChangeContext, portMapping, externalIP, internalIP string, externalPort int, protocol, reason string, err error) {
@@ -157,9 +156,10 @@ func (ep *EventPublisher) PublishPortForwardFailedEvent(ctx context.Context, ser
 
 	if createErr := ep.createEvent(ctx, service, EventPortForwardFailed, message, eventData, changeContext); createErr != nil {
 		logger.Error(createErr, "Failed to publish PortForwardFailed event")
-	} else {
-		logger.V(1).Info("Published PortForwardFailed event", "port_mapping", portMapping, "reason", reason)
+		return
 	}
+
+	logger.V(1).Info("Published PortForwardFailed event", "port_mapping", portMapping, "reason", reason)
 }
 
 func (ep *EventPublisher) createEvent(ctx context.Context, service *corev1.Service, eventType, message string, eventData *PortForwardEventData, changeContext *ChangeContext) error {
@@ -176,7 +176,7 @@ func (ep *EventPublisher) createEvent(ctx context.Context, service *corev1.Servi
 		annotations["unifi-port-forwarder/event-data"] = string(eventDataJSON)
 	}
 
-	logger.V(1).Info("DEBUG: createEvent called", "recorder_nil", ep.recorder == nil, "annotations_count", len(annotations))
+	logger.V(1).Info("createEvent called", "recorder_nil", ep.recorder == nil, "annotations_count", len(annotations))
 
 	if ep.recorder != nil {
 		eventTypeValue := "Normal"
@@ -186,10 +186,8 @@ func (ep *EventPublisher) createEvent(ctx context.Context, service *corev1.Servi
 
 		// Use annotated event to include metadata
 		if len(annotations) > 0 {
-			logger.V(1).Info("DEBUG: Calling AnnotatedEventf")
 			ep.recorder.AnnotatedEventf(service, annotations, eventTypeValue, eventType, "%s", message)
 		} else {
-			logger.V(1).Info("DEBUG: Calling Eventf")
 			ep.recorder.Eventf(service, eventTypeValue, eventType, "%s", message)
 		}
 	} else {

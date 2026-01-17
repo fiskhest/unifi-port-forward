@@ -99,7 +99,6 @@ func analyzeChanges(oldSvc, newSvc *corev1.Service) *ChangeContext {
 		ServiceName:      newSvc.Name,
 	}
 
-	// 🔥 NEW: Check if service is being marked for deletion (check first for early return)
 	oldDeletionTimestamp := oldSvc.GetDeletionTimestamp()
 	newDeletionTimestamp := newSvc.GetDeletionTimestamp()
 
@@ -203,30 +202,30 @@ func portKeyByName(port corev1.ServicePort) string {
 }
 
 // serializeChangeContext converts ChangeContext to multi-line formatted JSON string for annotation storage
-func serializeChangeContext(context *ChangeContext) (string, error) {
-	// Create serializable version (without redundant fields)
-	serializable := &ChangeContextSerializable{
-		IPChanged:         context.IPChanged,
-		OldIP:             context.OldIP,
-		NewIP:             context.NewIP,
-		AnnotationChanged: context.AnnotationChanged,
-		OldAnnotation:     context.OldAnnotation,
-		NewAnnotation:     context.NewAnnotation,
-		SpecChanged:       context.SpecChanged,
-		DeletionChanged:   context.DeletionChanged,
-		PortChanges:       context.PortChanges,
-		ServiceKey:        context.ServiceKey,
-		PortForwardRules:  context.PortForwardRules,
-	}
+// func serializeChangeContext(context *ChangeContext) (string, error) {
+// 	// Create serializable version (without redundant fields)
+// 	serializable := &ChangeContextSerializable{
+// 		IPChanged:         context.IPChanged,
+// 		OldIP:             context.OldIP,
+// 		NewIP:             context.NewIP,
+// 		AnnotationChanged: context.AnnotationChanged,
+// 		OldAnnotation:     context.OldAnnotation,
+// 		NewAnnotation:     context.NewAnnotation,
+// 		SpecChanged:       context.SpecChanged,
+// 		DeletionChanged:   context.DeletionChanged,
+// 		PortChanges:       context.PortChanges,
+// 		ServiceKey:        context.ServiceKey,
+// 		PortForwardRules:  context.PortForwardRules,
+// 	}
 
-	// Marshal to JSON with proper formatting for block scalar
-	jsonBytes, err := json.MarshalIndent(serializable, "", "  ")
-	if err != nil {
-		return "", fmt.Errorf("failed to marshal change context: %w", err)
-	}
+// 	// Marshal to JSON with proper formatting for block scalar
+// 	jsonBytes, err := json.MarshalIndent(serializable, "", "  ")
+// 	if err != nil {
+// 		return "", fmt.Errorf("failed to marshal change context: %w", err)
+// 	}
 
-	return string(jsonBytes), nil
-}
+// 	return string(jsonBytes), nil
+// }
 
 // collectRulesForService extracts rule names from port configurations
 func collectRulesForService(configs []routers.PortConfig) []string {
@@ -248,9 +247,9 @@ func parseServiceKey(serviceKey string) (namespace, name string) {
 }
 
 // SerializeChangeContextForTest is a test helper function to expose serialization
-func SerializeChangeContextForTest(context *ChangeContext) (string, error) {
-	return serializeChangeContext(context)
-}
+// func SerializeChangeContextForTest(context *ChangeContext) (string, error) {
+// 	return serializeChangeContext(context)
+// }
 
 // ExtractChangeContextForTest is a test helper function to expose extraction with fallback
 func ExtractChangeContextForTest(contextJSON, fallbackNamespace, fallbackName string) (*ChangeContext, error) {

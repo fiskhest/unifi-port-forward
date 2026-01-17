@@ -23,12 +23,6 @@ func (ServiceChangePredicate) Generic(e event.GenericEvent) bool {
 }
 
 func (ServiceChangePredicate) Update(e event.UpdateEvent) bool {
-	ctrllog.Log.Info("🔍 UPDATE EVENT RECEIVED - DIAGNOSTIC MODE",
-		"event_type", "UPDATE",
-		"object_type", fmt.Sprintf("%T", e.ObjectOld),
-		"namespace", e.ObjectOld.GetNamespace(),
-		"name", e.ObjectOld.GetName())
-
 	oldSvc, ok := e.ObjectOld.(*corev1.Service)
 	if !ok {
 		return false
@@ -39,9 +33,27 @@ func (ServiceChangePredicate) Update(e event.UpdateEvent) bool {
 		return false
 	}
 
-	// Only process if service has/had port forwarding
-	if !hasPortForwardAnnotation(oldSvc) && !hasPortForwardAnnotation(newSvc) {
-		ctrllog.Log.Info("SERVICE LACKED PORTFORWARD ANNOTATION")
+	oldHasFinalizer := controllerutil.ContainsFinalizer(oldSvc, config.FinalizerLabel)
+	newHasFinalizer := controllerutil.ContainsFinalizer(newSvc, config.FinalizerLabel)
+	oldHasAnnotation := hasPortForwardAnnotation(oldSvc)
+	newHasAnnotation := hasPortForwardAnnotation(newSvc)
+
+	logger := ctrllog.Log.WithName("predicate-update").WithValues(
+		"namespace", oldSvc.Namespace,
+		"name", oldSvc.Name,
+		"old_has_finalizer", oldHasFinalizer,
+		"new_has_finalizer", newHasFinalizer,
+		"old_has_annotation", oldHasAnnotation,
+		"new_has_annotation", newHasAnnotation,
+		"old_finalizers", oldSvc.Finalizers,
+		"new_finalizers", newSvc.Finalizers,
+	)
+
+	// Only process if service has both our finalizer AND port forwarding annotation
+	if (!oldHasFinalizer && !newHasFinalizer) || (!oldHasAnnotation && !newHasAnnotation) {
+		logger.V(1).Info("Update event filtered: service lacks finalizer and/or annotation",
+			"old_has_finalizer", oldHasFinalizer, "new_has_finalizer", newHasFinalizer,
+			"old_has_annotation", oldHasAnnotation, "new_has_annotation", newHasAnnotation)
 		return false
 	}
 
@@ -50,37 +62,23 @@ func (ServiceChangePredicate) Update(e event.UpdateEvent) bool {
 
 	// Only trigger if relevant changes occurred
 	if !changeContext.HasRelevantChanges() {
-		ctrllog.Log.Info("SERVICE LACKED HasRelevantChanges()")
-
+		ctrllog.Log.V(1).Info("Service lacks relevant changes")
 		return false
 	}
-
-	ctrllog.Log.Info("🔍 UPDATE EVENT RECEIVED - DID WE COME TO THE END OF THE UPDATE PREDICATE???",
-		"event_type", "UPDATE",
-		"object_type", fmt.Sprintf("%T", e.ObjectOld),
-		"namespace", e.ObjectOld.GetNamespace(),
-		"name", e.ObjectOld.GetName())
 
 	return true
 }
 
 func (ServiceChangePredicate) Create(e event.CreateEvent) bool {
-	ctrllog.Log.Info("🔍 CREATE EVENT RECEIVED - DIAGNOSTIC MODE",
-		"event_type", "CREATE",
-		"object_type", fmt.Sprintf("%T", e.Object),
-		"namespace", e.Object.GetNamespace(),
-		"name", e.Object.GetName())
-
 	svc, ok := e.Object.(*corev1.Service)
 	if !ok {
-		ctrllog.Log.Info("❌ Create event object is not Service type",
+		ctrllog.Log.V(1).Info("Create event object is not Service type",
 			"object_type", fmt.Sprintf("%T", e.Object))
 		return false
 	}
 
 	hasAnnotation := hasPortForwardAnnotation(svc)
 
-	// Enhanced logging for creation filtering decisions
 	logger := ctrllog.Log.WithName("predicate-create").WithValues(
 		"namespace", svc.Namespace,
 		"name", svc.Name,
@@ -89,26 +87,17 @@ func (ServiceChangePredicate) Create(e event.CreateEvent) bool {
 	)
 
 	if !hasAnnotation {
-		logger.Info("Create event filtered: service does not have port forwarding annotation")
+		logger.V(1).Info("Create event filtered: service does not have port forwarding annotation")
 		return false
 	}
 
-	logger.Info("Create event accepted: service has port forwarding annotation")
 	return true
 }
 
 func (ServiceChangePredicate) Delete(e event.DeleteEvent) bool {
-	// CRITICAL DIAGNOSTIC: Log ALL Delete events at entry to see if they reach us
-	ctrllog.Log.Info("🔍 DELETE EVENT RECEIVED - DIAGNOSTIC MODE",
-		"event_type", "DELETE",
-		"object_type", fmt.Sprintf("%T", e.Object),
-		"namespace", e.Object.GetNamespace(),
-		"name", e.Object.GetName(),
-		"deletion_timestamp", e.Object.GetDeletionTimestamp())
-
 	svc, ok := e.Object.(*corev1.Service)
 	if !ok {
-		ctrllog.Log.Info("❌ Delete event object is not Service type",
+		ctrllog.Log.V(1).Info("Delete event object is not Service type",
 			"object_type", fmt.Sprintf("%T", e.Object))
 		return false
 	}
@@ -116,7 +105,6 @@ func (ServiceChangePredicate) Delete(e event.DeleteEvent) bool {
 	hasFinalizer := controllerutil.ContainsFinalizer(svc, config.FinalizerLabel)
 	hasAnnotation := hasPortForwardAnnotation(svc)
 
-	// Enhanced logging for deletion filtering decisions
 	logger := ctrllog.Log.WithName("predicate-delete").WithValues(
 		"namespace", svc.Namespace,
 		"name", svc.Name,
@@ -126,18 +114,9 @@ func (ServiceChangePredicate) Delete(e event.DeleteEvent) bool {
 		"finalizers", svc.Finalizers,
 	)
 
-	// STRATEGY: Accept ANY service that could have been managed
-	// This prevents the race condition where service gets deleted before reconciliation can process finalizer
-	logger.Info("🔍 DELETE EVENT DECISION ANALYSIS",
-		"namespace", svc.Namespace,
-		"name", svc.Name,
-		"has_finalizer", hasFinalizer,
-		"has_annotation", hasAnnotation,
-		"deletion_timestamp", svc.DeletionTimestamp)
-
 	// PRIMARY PATH: Service currently has our finalizer - highest priority
 	if hasFinalizer {
-		logger.Info("✅ DELETE EVENT ACCEPTED - service has our finalizer (PRIMARY PATH)",
+		logger.Info("Deleting service with managed finalizer",
 			"namespace", svc.Namespace,
 			"name", svc.Name,
 			"deletion_timestamp", svc.DeletionTimestamp)
@@ -145,20 +124,16 @@ func (ServiceChangePredicate) Delete(e event.DeleteEvent) bool {
 	}
 
 	// SECONDARY PATH: Service ever had port forwarding annotation - orphaned cleanup
-	// This catches services that lost finalizer during deletion race conditions
+	// AI: "This catches services that lost finalizer during deletion race conditions"
+	// TODO: I'm not sure this should be here? Or will this return true and delete a Port Forward if we have a "valid and deployed annotation" but no finalizer?
 	if hasAnnotation {
-		logger.Info("✅ DELETE EVENT ACCEPTED - service had port forwarding (ORPHANED CLEANUP)",
+		logger.Info("Deleting service with unmanaged port forward",
 			"namespace", svc.Namespace,
 			"name", svc.Name,
 			"deletion_timestamp", svc.DeletionTimestamp)
 		return true
 	}
 
-	// FILTER OUT: Service never had port forwarding - not our responsibility
-	logger.Info("❌ DELETE EVENT FILTERED - service never had port forwarding",
-		"namespace", svc.Namespace,
-		"name", svc.Name,
-		"deletion_timestamp", svc.DeletionTimestamp)
 	return false
 }
 
