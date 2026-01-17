@@ -15,7 +15,6 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -206,59 +205,6 @@ func (r *PortForwardReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	}
 
 	logger.V(1).Info("No relevant changes detected")
-	return ctrl.Result{}, nil
-}
-
-// handleServiceDeletion handles service deletion cleanup for services without finalizers
-func (r *PortForwardReconciler) handleServiceDeletion(ctx context.Context, namespacedName client.ObjectKey) (ctrl.Result, error) {
-	logger := ctrllog.FromContext(ctx).WithValues("namespace", namespacedName.Namespace, "name", namespacedName.Name)
-	logger.Info("Handling service deletion without finalizer - best effort cleanup")
-
-	// Get current port forward rules
-	currentRules, err := r.Router.ListAllPortForwards(ctx)
-	if err != nil {
-		logger.Error(err, "Failed to list current port forwards for cleanup")
-		// Don't fail the reconciliation, just log the error
-		return ctrl.Result{}, nil
-	}
-
-	// Remove all rules that belong to this service
-	// service := fmt.Sprintf("%s/%s:%s", namespacedName.Namespace, namespacedName.Name, namespacedName)
-	removedCount := 0
-	var cleanupErrors []string
-
-	for _, rule := range currentRules {
-		if helpers.RuleBelongsToService(rule.Name, namespacedName.Namespace, namespacedName.Name) {
-			config := routers.PortConfig{
-				Name:      rule.Name,
-				DstPort:   r.parseIntField(rule.DstPort),
-				FwdPort:   r.parseIntField(rule.FwdPort),
-				DstIP:     rule.DestinationIP,
-				Protocol:  rule.Proto,
-				Enabled:   rule.Enabled,
-				Interface: rule.PfwdInterface,
-				SrcIP:     rule.Src,
-			}
-
-			if err := r.Router.RemovePort(ctx, config); err != nil {
-				logger.Error(err, "Failed to remove port forward rule during service deletion",
-					"port", config.DstPort, "rule_name", rule.Name)
-				cleanupErrors = append(cleanupErrors, fmt.Sprintf("port %d: %v", config.DstPort, err))
-			} else {
-				removedCount++
-				logger.Info("Successfully removed port forward rule during service deletion",
-					"port", config.DstPort, "rule_name", rule.Name)
-				// Add port conflict tracking cleanup
-				helpers.UnmarkPortUsed(config.DstPort)
-			}
-		}
-	}
-
-	logger.Info("Service deletion cleanup completed",
-		"removed_count", removedCount, "errors_count", len(cleanupErrors))
-
-	// Always return success - this is cleanup for already-deleted services
-	// We don't want to retry and block other operations
 	return ctrl.Result{}, nil
 }
 
@@ -502,39 +448,6 @@ func (r *PortForwardReconciler) finalizeService(ctx context.Context, service *co
 	return nil
 }
 
-// syncRouterState synchronizes router rules to internal maps for state tracking
-func (r *PortForwardReconciler) syncRouterState(ctx context.Context) error {
-	logger := ctrllog.FromContext(ctx).WithValues("operation", "sync_router_state")
-
-	// Get current router rules
-	currentRules, err := r.Router.ListAllPortForwards(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to list port forwards for state sync: %w", err)
-	}
-
-	// Clear existing maps
-	r.ruleOwnerMap = make(map[string]string)
-	r.serviceRuleMap = make(map[string][]*unifi.PortForward)
-
-	// Populate maps with current router state
-	for _, rule := range currentRules {
-		// Extract service key from rule name (format: "namespace/service-name:port-name")
-		parts := strings.SplitN(rule.Name, ":", 3)
-		if len(parts) >= 2 {
-			serviceKey := fmt.Sprintf("%s/%s", parts[0], parts[1])
-			r.ruleOwnerMap[rule.DstPort] = serviceKey
-			r.serviceRuleMap[serviceKey] = append(r.serviceRuleMap[serviceKey], rule)
-		}
-	}
-
-	logger.Info("Synchronized router state",
-		"total_rules", len(currentRules),
-		"service_mappings", len(r.serviceRuleMap),
-		"port_mappings", len(r.ruleOwnerMap))
-
-	return nil
-}
-
 // detectChanges determines what changes are needed using fresh router state
 func (r *PortForwardReconciler) detectChanges(ctx context.Context, service *corev1.Service, serviceKey string, allCurrentRules []*unifi.PortForward) *ChangeContext {
 	lbIP := helpers.GetLBIP(service)
@@ -640,13 +553,6 @@ func (r *PortForwardReconciler) PerformInitialReconciliationSync(ctx context.Con
 	return nil
 }
 
-// needsMapRefresh determines if internal maps need refreshing based on time or initialization state
-func (r *PortForwardReconciler) needsMapRefresh() bool {
-	// Refresh needed if ticker not started (first run) or 5 minutes have passed
-	return r.refreshTicker == nil ||
-		time.Since(time.Unix(r.mapVersion, 0)) > 5*time.Minute
-}
-
 // refreshMaps performs incremental updates to internal state maps
 func (r *PortForwardReconciler) refreshMaps(ctx context.Context) error {
 	// Create a clean logger context with controller and component fields
@@ -713,49 +619,18 @@ func (r *PortForwardReconciler) updateMapsIncrementally(currentRules []*unifi.Po
 func (r *PortForwardReconciler) StartPeriodicRefresh(interval time.Duration) {
 	r.refreshTicker = time.NewTicker(interval)
 	go func() {
-		for {
-			select {
-			case <-r.refreshTicker.C:
-				ctx := context.Background()
-				logger := ctrllog.FromContext(ctx).WithValues(
-					"controller", "port-forward-controller",
-					"component", "map-refresh",
-					"operation", "periodic_refresh",
-				)
-				if err := r.refreshMaps(ctx); err != nil {
-					logger.Error(err, "Periodic refresh failed")
-				}
+		for range r.refreshTicker.C {
+			ctx := context.Background()
+			logger := ctrllog.FromContext(ctx).WithValues(
+				"controller", "port-forward-controller",
+				"component", "map-refresh",
+				"operation", "periodic_refresh",
+			)
+			if err := r.refreshMaps(ctx); err != nil {
+				logger.Error(err, "Periodic refresh failed")
 			}
 		}
 	}()
-}
-
-// createEvent creates a Kubernetes event for the service
-func (r *PortForwardReconciler) createEvent(ctx context.Context, service *corev1.Service, eventType, message string) {
-	event := &corev1.Event{
-		ObjectMeta: metav1.ObjectMeta{
-			GenerateName: service.Name + "-",
-			Namespace:    service.Namespace,
-		},
-		InvolvedObject: corev1.ObjectReference{
-			Kind:            service.Kind,
-			Namespace:       service.Namespace,
-			Name:            service.Name,
-			UID:             service.UID,
-			ResourceVersion: service.ResourceVersion,
-		},
-		Reason:  eventType,
-		Message: message,
-		Source: corev1.EventSource{
-			Component: "port-forward-controller",
-		},
-		Type:          "Normal",
-		LastTimestamp: metav1.Now(),
-	}
-
-	if err := r.Create(ctx, event); err != nil {
-		ctrllog.FromContext(ctx).Error(err, "Failed to create event", "event_type", eventType)
-	}
 }
 
 // parseIntField safely parses a string field to int
@@ -931,14 +806,12 @@ func (r *PortForwardReconciler) portConfigsMatch(ctx context.Context, currentRul
 
 // fallbackToIPChangeDetection provides fallback when desired state calculation fails
 func (r *PortForwardReconciler) fallbackToIPChangeDetection(currentRules []*unifi.PortForward, lbIP string, changeContext *ChangeContext) *ChangeContext {
-	if currentRules != nil {
-		for _, rule := range currentRules {
-			if rule.DestinationIP != lbIP {
-				changeContext.IPChanged = true
-				changeContext.OldIP = rule.DestinationIP
-				changeContext.NewIP = lbIP
-				break
-			}
+	for _, rule := range currentRules {
+		if rule.DestinationIP != lbIP {
+			changeContext.IPChanged = true
+			changeContext.OldIP = rule.DestinationIP
+			changeContext.NewIP = lbIP
+			break
 		}
 	}
 	return changeContext

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
-	"time"
 
 	"unifi-port-forwarder/pkg/config"
 	"unifi-port-forwarder/pkg/helpers"
@@ -227,43 +226,6 @@ func serializeChangeContext(context *ChangeContext) (string, error) {
 	}
 
 	return string(jsonBytes), nil
-}
-
-// determineOverallStatus calculates overall operation status
-func determineOverallStatus(successCount, failedCount int) string {
-	if failedCount == 0 {
-		return "success"
-	}
-	if successCount == 0 {
-		return "complete_failure"
-	}
-	return "partial_failure"
-}
-
-// buildFailedOperations creates failed port operation details from errors
-func buildFailedOperations(errors []error, operations []PortOperation) []FailedPortOperation {
-	var failedOps []FailedPortOperation
-
-	for i, err := range errors {
-		if i < len(operations) {
-			op := operations[i]
-			failedOps = append(failedOps, FailedPortOperation{
-				PortMapping:  op.Config.Name,
-				ExternalPort: op.Config.DstPort,
-				Protocol:     op.Config.Protocol,
-				ErrorType:    "router_error",
-				ErrorMessage: err.Error(),
-				Timestamp:    getCurrentTime(),
-			})
-		}
-	}
-
-	return failedOps
-}
-
-// getCurrentTime returns current timestamp in RFC3339 format
-func getCurrentTime() string {
-	return time.Now().Format(time.RFC3339)
 }
 
 // collectRulesForService extracts rule names from port configurations

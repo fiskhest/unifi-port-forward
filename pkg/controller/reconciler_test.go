@@ -730,6 +730,7 @@ func TestReconcile_RouterCommunication_Failures(t *testing.T) {
 			Namespace: updateTestService.Namespace,
 		},
 	})
+	_ = ctrlResult // suppress ineffassign warning - only used for logging
 
 	// Check what operations were attempted
 	ops = env.MockRouter.GetOperationCounts()
@@ -1709,6 +1710,7 @@ func TestDeletionDetection_FullFlow(t *testing.T) {
 	if err != nil {
 		t.Errorf("Deletion reconcile failed: %v", err)
 	}
+	_ = result // suppress ineffassign warning - result not needed
 
 	// 6. Verify cleanup occurred - rule should be deleted and finalizer removed
 	env.AssertRuleDoesNotExistByName(t, "default/test-service:http")

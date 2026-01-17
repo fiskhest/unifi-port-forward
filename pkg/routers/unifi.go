@@ -2,6 +2,7 @@ package routers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -212,7 +213,7 @@ func (router *UnifiRouter) UpdatePort(ctx context.Context, port int, config Port
 			"port", port,
 			"config_name", config.Name,
 			"error_type", "rule_not_found")
-		return fmt.Errorf(errorMsg)
+		return errors.New(errorMsg)
 	}
 
 	logger.V(1).Info("Found existing port forward rule to update",
