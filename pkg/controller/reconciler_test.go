@@ -1567,6 +1567,86 @@ func TestReconcile_ComplexPrefixScenarios(t *testing.T) {
 	t.Log("✅ Complex prefix scenarios test passed")
 }
 
+// TestReconcile_PortConflictWithSimilarNames tests the specific bug case where
+// services with similar names (web-service vs web-service2) cause false port conflicts
+func TestReconcile_PortConflictWithSimilarNames(t *testing.T) {
+	env := NewControllerTestEnv(t)
+	defer env.Cleanup()
+
+	ctx := context.Background()
+
+	// Create first service web-service with port 3001
+	webService := env.CreateTestService("unifi-port-forwarder", "web-service",
+		map[string]string{config.FilterAnnotation: "3001:http"},
+		[]corev1.ServicePort{{Name: "http", Port: 80, Protocol: corev1.ProtocolTCP}},
+		"192.168.1.100")
+
+	if err := env.CreateService(ctx, webService); err != nil {
+		t.Fatalf("Failed to create web-service: %v", err)
+	}
+
+	// Reconcile first service
+	_, err := env.ReconcileServiceWithFinalizer(t, webService)
+	if err != nil {
+		t.Errorf("Failed to reconcile web-service: %v", err)
+	}
+
+	// Verify first rule exists
+	env.AssertRuleExistsByName(t, "unifi-port-forwarder/web-service:http")
+
+	// Create second service web-service2 with different port - this should NOT conflict
+	webService2 := env.CreateTestService("unifi-port-forwarder", "web-service2",
+		map[string]string{config.FilterAnnotation: "3002:https"},
+		[]corev1.ServicePort{{Name: "https", Port: 443, Protocol: corev1.ProtocolTCP}},
+		"192.168.1.101")
+
+	if err := env.CreateService(ctx, webService2); err != nil {
+		t.Fatalf("Failed to create web-service2: %v", err)
+	}
+
+	// Reconcile second service - this should succeed without port conflict errors
+	_, err = env.ReconcileServiceWithFinalizer(t, webService2)
+	if err != nil {
+		t.Errorf("Failed to reconcile web-service2 (this indicates the bug is not fixed): %v", err)
+	}
+
+	// Verify both rules exist independently
+	env.AssertRuleExistsByName(t, "unifi-port-forwarder/web-service:http")
+	env.AssertRuleExistsByName(t, "unifi-port-forwarder/web-service2:https")
+
+	// Verify that the rules have different external ports (they should both use 3001)
+	// since they're different services with different internal ports
+	webRules := env.GetRuleNamesWithPrefix("unifi-port-forwarder/web-service:")
+	webService2Rules := env.GetRuleNamesWithPrefix("unifi-port-forwarder/web-service2:")
+
+	if len(webRules) != 1 {
+		t.Errorf("Expected 1 rule for web-service, got %d: %v", len(webRules), webRules)
+	}
+	if len(webService2Rules) != 1 {
+		t.Errorf("Expected 1 rule for web-service2, got %d: %v", len(webService2Rules), webService2Rules)
+	}
+
+	// Test deletion isolation - delete web-service and ensure web-service2 remains
+	if err := env.DeleteServiceByName(ctx, "unifi-port-forwarder", "web-service"); err != nil {
+		t.Fatalf("Failed to delete web-service: %v", err)
+	}
+
+	req := ctrl.Request{
+		NamespacedName: types.NamespacedName{
+			Name:      "web-service",
+			Namespace: "unifi-port-forwarder",
+		},
+	}
+	result, err := env.Controller.Reconcile(ctx, req)
+	env.AssertReconcileSuccess(t, result, err)
+
+	// Verify web-service rule is deleted but web-service2 rule remains
+	env.AssertRuleDoesNotExistByName(t, "unifi-port-forwarder/web-service:http")
+	env.AssertRuleExistsByName(t, "unifi-port-forwarder/web-service2:https")
+
+	t.Log("✅ Port conflict with similar names test passed - bug is fixed")
+}
+
 // TestDeletionDetection_FullFlow tests the complete deletion detection and cleanup flow via UPDATE event
 func TestDeletionDetection_FullFlow(t *testing.T) {
 	env := NewControllerTestEnv(t)

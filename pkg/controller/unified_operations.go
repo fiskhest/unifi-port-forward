@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strconv"
-	"strings"
 
 	"unifi-port-forwarder/pkg/config"
 	"unifi-port-forwarder/pkg/helpers"
@@ -91,7 +90,6 @@ func (op PortOperation) String() string {
 // - Port changes require CREATE + DELETE operations
 func (r *PortForwardReconciler) calculateDelta(currentRules []*unifi.PortForward, desiredConfigs []routers.PortConfig, changeContext *ChangeContext, service *corev1.Service) []PortOperation {
 	var operations []PortOperation
-	servicePrefix := fmt.Sprintf("%s/%s:", service.Namespace, service.Name)
 
 	// Detect conflicts with existing manual rules first
 	conflictOperations := r.detectPortConflicts(currentRules, desiredConfigs, service)
@@ -119,7 +117,7 @@ func (r *PortForwardReconciler) calculateDelta(currentRules []*unifi.PortForward
 	// If port keys match but properties differ, it's UPDATE
 	currentMap := make(map[string]*unifi.PortForward) // portKey -> existing rule
 	for _, rule := range currentRules {
-		if strings.HasPrefix(rule.Name, servicePrefix) {
+		if helpers.RuleBelongsToService(rule.Name, service.Namespace, service.Name) {
 			// Use same key format as desiredMap for proper comparison
 			// This ensures we can accurately compare desired vs current router state
 			portKey := fmt.Sprintf("%s-%s-%s", rule.DstPort, rule.FwdPort, rule.Proto)
@@ -317,7 +315,6 @@ func (r *PortForwardReconciler) calculateDesiredState(service *corev1.Service) (
 // detectPortConflicts finds existing rules that conflict with desired ports but have different names
 func (r *PortForwardReconciler) detectPortConflicts(currentRules []*unifi.PortForward, desiredConfigs []routers.PortConfig, service *corev1.Service) []PortOperation {
 	var operations []PortOperation
-	servicePrefix := fmt.Sprintf("%s/%s:", service.Namespace, service.Name)
 	logger := ctrllog.FromContext(context.Background()).WithValues("service", service.Name, "namespace", service.Namespace)
 
 	// Build map of desired port configurations using dstPort-fwdPort-protocol as key
@@ -334,7 +331,7 @@ func (r *PortForwardReconciler) detectPortConflicts(currentRules []*unifi.PortFo
 		fwdPort := strToInt(rule.FwdPort)
 
 		// Skip if this rule is already owned by this service
-		if strings.HasPrefix(rule.Name, servicePrefix) {
+		if helpers.RuleBelongsToService(rule.Name, service.Namespace, service.Name) {
 			continue
 		}
 

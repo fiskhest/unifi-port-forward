@@ -78,6 +78,115 @@ func TestGetLBIP(t *testing.T) {
 	}
 }
 
+func TestRuleBelongsToService(t *testing.T) {
+	testCases := []struct {
+		name        string
+		ruleName    string
+		namespace   string
+		serviceName string
+		expected    bool
+	}{
+		// Exact matches
+		{
+			name:        "exact match with port",
+			ruleName:    "default/web:http",
+			namespace:   "default",
+			serviceName: "web",
+			expected:    true,
+		},
+		{
+			name:        "exact match with complex service name",
+			ruleName:    "prod/web-service:https",
+			namespace:   "prod",
+			serviceName: "web-service",
+			expected:    true,
+		},
+		// Different services - should NOT match
+		{
+			name:        "different service name prefix",
+			ruleName:    "default/web-service2:http",
+			namespace:   "default",
+			serviceName: "web",
+			expected:    false,
+		},
+		{
+			name:        "different service name suffix",
+			ruleName:    "default/web2:http",
+			namespace:   "default",
+			serviceName: "web",
+			expected:    false,
+		},
+		{
+			name:        "different namespace",
+			ruleName:    "prod/web:http",
+			namespace:   "default",
+			serviceName: "web",
+			expected:    false,
+		},
+		// Edge cases
+		{
+			name:        "no port separator",
+			ruleName:    "default/web",
+			namespace:   "default",
+			serviceName: "web",
+			expected:    false,
+		},
+		{
+			name:        "no namespace separator",
+			ruleName:    "web:http",
+			namespace:   "default",
+			serviceName: "web",
+			expected:    false,
+		},
+		{
+			name:        "similar but different service name",
+			ruleName:    "default/web-service:http",
+			namespace:   "default",
+			serviceName: "web",
+			expected:    false,
+		},
+		{
+			name:        "service name is prefix of rule service",
+			ruleName:    "default/webapp:http",
+			namespace:   "default",
+			serviceName: "web",
+			expected:    false,
+		},
+		{
+			name:        "rule service is prefix of service name",
+			ruleName:    "default/web:http",
+			namespace:   "default",
+			serviceName: "webapp",
+			expected:    false,
+		},
+		// Complex cases
+		{
+			name:        "multiple dashes and numbers",
+			ruleName:    "kube-system/api-server-v2:8080",
+			namespace:   "kube-system",
+			serviceName: "api-server-v2",
+			expected:    true,
+		},
+		{
+			name:        "similar with different numbers",
+			ruleName:    "kube-system/api-server-v3:8080",
+			namespace:   "kube-system",
+			serviceName: "api-server-v2",
+			expected:    false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := RuleBelongsToService(tc.ruleName, tc.namespace, tc.serviceName)
+			if result != tc.expected {
+				t.Errorf("RuleBelongsToService(%q, %q, %q) = %v; expected %v",
+					tc.ruleName, tc.namespace, tc.serviceName, result, tc.expected)
+			}
+		})
+	}
+}
+
 func TestUnmarkPortUsed(t *testing.T) {
 	// Clear any existing tracking
 	ClearPortConflictTracking()

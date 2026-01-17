@@ -430,6 +430,26 @@ func extractServiceKeyFromRuleName(ruleName string) string {
 	return parts[0]
 }
 
+// RuleBelongsToService checks if a port forwarding rule belongs to a specific service
+// by performing exact matching of namespace and service name
+func RuleBelongsToService(ruleName, namespace, serviceName string) bool {
+	// Rule format: namespace/service:port
+	parts := strings.SplitN(ruleName, ":", 2)
+	if len(parts) != 2 {
+		return false
+	}
+
+	// Extract namespace/service part
+	servicePart := parts[0]
+	serviceParts := strings.SplitN(servicePart, "/", 2)
+	if len(serviceParts) != 2 {
+		return false
+	}
+
+	ruleNamespace, ruleServiceName := serviceParts[0], serviceParts[1]
+	return ruleNamespace == namespace && ruleServiceName == serviceName
+}
+
 // IsPortForwardRuleCRDAvailable checks if the PortForwardRule CRD exists and is established
 func IsPortForwardRuleCRDAvailable(ctx context.Context, client client.Client) bool {
 	crdName := "portforwardrules.port-forwarder.unifi.com"

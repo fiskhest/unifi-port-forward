@@ -224,12 +224,11 @@ func (r *PortForwardReconciler) handleServiceDeletion(ctx context.Context, names
 
 	// Remove all rules that belong to this service
 	// service := fmt.Sprintf("%s/%s:%s", namespacedName.Namespace, namespacedName.Name, namespacedName)
-	servicePrefix := fmt.Sprintf("%s/%s:", namespacedName.Namespace, namespacedName.Name)
 	removedCount := 0
 	var cleanupErrors []string
 
 	for _, rule := range currentRules {
-		if strings.HasPrefix(rule.Name, servicePrefix) {
+		if helpers.RuleBelongsToService(rule.Name, namespacedName.Namespace, namespacedName.Name) {
 			config := routers.PortConfig{
 				Name:      rule.Name,
 				DstPort:   r.parseIntField(rule.DstPort),
@@ -428,8 +427,7 @@ func (r *PortForwardReconciler) finalizeService(ctx context.Context, service *co
 	logger.Info("✅ LISTED PORT FORWARDS", "count", len(currentRules))
 
 	// Remove all rules that belong to this service
-	servicePrefix := fmt.Sprintf("%s/%s:", service.Namespace, service.Name)
-	logger.Info("🔍 SEARCHING FOR RULES", "service_prefix", servicePrefix)
+	logger.Info("🔍 SEARCHING FOR RULES", "service_namespace", service.Namespace, "service_name", service.Name)
 
 	removedCount := 0
 	var cleanupErrors []string
@@ -438,9 +436,9 @@ func (r *PortForwardReconciler) finalizeService(ctx context.Context, service *co
 		logger.Info("🔍 CHECKING RULE",
 			"index", i,
 			"rule_name", rule.Name,
-			"matches_prefix", strings.HasPrefix(rule.Name, servicePrefix))
+			"matches_service", helpers.RuleBelongsToService(rule.Name, service.Namespace, service.Name))
 
-		if strings.HasPrefix(rule.Name, servicePrefix) {
+		if helpers.RuleBelongsToService(rule.Name, service.Namespace, service.Name) {
 			logger.Info("🗑️ DELETING RULE", "rule_name", rule.Name)
 
 			// Convert string ports to int for PortConfig
@@ -801,17 +799,16 @@ func (r *PortForwardReconciler) handleMissingServiceCleanup(ctx context.Context,
 
 	logger.Info("📡 LISTED CURRENT PORT FORWARDS", "count", len(currentRules))
 
-	servicePrefix := fmt.Sprintf("%s/%s:", namespacedName.Namespace, namespacedName.Name)
-	logger.Info("🔍 SEARCHING FOR RULES", "service_prefix", servicePrefix)
+	logger.Info("🔍 SEARCHING FOR RULES", "service_namespace", namespacedName.Namespace, "service_name", namespacedName.Name)
 
 	removedCount := 0
 	for i, rule := range currentRules {
 		logger.Info("🔍 CHECKING RULE",
 			"index", i,
 			"rule_name", rule.Name,
-			"matches_prefix", strings.HasPrefix(rule.Name, servicePrefix))
+			"matches_service", helpers.RuleBelongsToService(rule.Name, namespacedName.Namespace, namespacedName.Name))
 
-		if strings.HasPrefix(rule.Name, servicePrefix) {
+		if helpers.RuleBelongsToService(rule.Name, namespacedName.Namespace, namespacedName.Name) {
 			logger.Info("🗑️ DELETING RULE FOR MISSING SERVICE", "rule_name", rule.Name)
 
 			// Convert string ports to int for PortConfig
