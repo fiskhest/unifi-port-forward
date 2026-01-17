@@ -3,15 +3,25 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
+
+	"unifi-port-forwarder/pkg/config"
+	"unifi-port-forwarder/pkg/helpers"
+	"unifi-port-forwarder/pkg/routers"
 
 	"github.com/filipowm/go-unifi/unifi"
 	corev1 "k8s.io/api/core/v1"
 	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
-	"unifi-port-forwarder/pkg/config"
-	"unifi-port-forwarder/pkg/helpers"
-	"unifi-port-forwarder/pkg/routers"
 )
+
+// strToInt converts string to int with fallback to 0
+func strToInt(s string) int {
+	if i, err := strconv.Atoi(s); err == nil {
+		return i
+	}
+	return 0
+}
 
 /*
 Port Key Format Documentation:
@@ -110,11 +120,9 @@ func (r *PortForwardReconciler) calculateDelta(currentRules []*unifi.PortForward
 	currentMap := make(map[string]*unifi.PortForward) // portKey -> existing rule
 	for _, rule := range currentRules {
 		if strings.HasPrefix(rule.Name, servicePrefix) {
-			dstPort := r.parseIntField(rule.DstPort)
-			fwdPort := r.parseIntField(rule.FwdPort)
 			// Use same key format as desiredMap for proper comparison
 			// This ensures we can accurately compare desired vs current router state
-			portKey := fmt.Sprintf("%d-%d-%s", dstPort, fwdPort, rule.Proto)
+			portKey := fmt.Sprintf("%s-%s-%s", rule.DstPort, rule.FwdPort, rule.Proto)
 			currentMap[portKey] = rule
 		}
 	}
@@ -122,13 +130,13 @@ func (r *PortForwardReconciler) calculateDelta(currentRules []*unifi.PortForward
 	// Find deletions (exist in current but not desired)
 	for portKey, rule := range currentMap {
 		if _, desired := desiredMap[portKey]; !desired {
-			dstPort := r.parseIntField(rule.DstPort)
+			dstPort := strToInt(rule.DstPort)
 			operations = append(operations, PortOperation{
 				Type: OpDelete,
 				Config: routers.PortConfig{
 					Name:      rule.Name,
 					DstPort:   dstPort,
-					FwdPort:   r.parseIntField(rule.FwdPort),
+					FwdPort:   strToInt(rule.FwdPort),
 					DstIP:     rule.DestinationIP,
 					Protocol:  rule.Proto,
 					Enabled:   rule.Enabled,
@@ -263,8 +271,8 @@ func (r *PortForwardReconciler) rollbackOperations(ctx context.Context, operatio
 			if op.ExistingRule != nil {
 				rollbackConfig := routers.PortConfig{
 					Name:      op.ExistingRule.Name,
-					DstPort:   r.parseIntField(op.ExistingRule.DstPort),
-					FwdPort:   r.parseIntField(op.ExistingRule.FwdPort),
+					DstPort:   strToInt(op.ExistingRule.DstPort),
+					FwdPort:   strToInt(op.ExistingRule.FwdPort),
 					DstIP:     op.ExistingRule.Fwd,
 					Protocol:  op.ExistingRule.Proto,
 					Enabled:   op.ExistingRule.Enabled,
@@ -322,8 +330,8 @@ func (r *PortForwardReconciler) detectPortConflicts(currentRules []*unifi.PortFo
 
 	// Check each current rule for conflicts
 	for _, rule := range currentRules {
-		dstPort := r.parseIntField(rule.DstPort)
-		fwdPort := r.parseIntField(rule.FwdPort)
+		dstPort := strToInt(rule.DstPort)
+		fwdPort := strToInt(rule.FwdPort)
 
 		// Skip if this rule is already owned by this service
 		if strings.HasPrefix(rule.Name, servicePrefix) {

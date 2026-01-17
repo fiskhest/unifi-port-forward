@@ -4,10 +4,12 @@ import (
 	"context"
 	"reflect"
 	"testing"
+	"time"
 
 	"unifi-port-forwarder/pkg/config"
 
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 )
@@ -1563,4 +1565,95 @@ func TestReconcile_ComplexPrefixScenarios(t *testing.T) {
 	env.AssertRuleExistsByName(t, "default/frontend-v2:https")
 
 	t.Log("✅ Complex prefix scenarios test passed")
+}
+
+// TestDeletionDetection_FullFlow tests the complete deletion detection and cleanup flow via UPDATE event
+func TestDeletionDetection_FullFlow(t *testing.T) {
+	env := NewControllerTestEnv(t)
+	defer env.Cleanup()
+
+	ctx := context.Background()
+
+	// 1. Create service with port forwarding annotation
+	service := env.CreateTestService("default", "test-service",
+		map[string]string{config.FilterAnnotation: "8080:http"},
+		[]corev1.ServicePort{{Name: "http", Port: 80, Protocol: corev1.ProtocolTCP}},
+		"192.168.1.100")
+
+	// Create service in fake client
+	if err := env.CreateService(ctx, service); err != nil {
+		t.Fatalf("Failed to create service: %v", err)
+	}
+
+	// 2. Initial reconciliation - should create rules and add finalizer
+	req := ctrl.Request{
+		NamespacedName: types.NamespacedName{
+			Name:      service.Name,
+			Namespace: service.Namespace,
+		},
+	}
+
+	result, err := env.ReconcileServiceWithFinalizer(t, service)
+	if err != nil {
+		t.Fatalf("Initial reconcile failed: %v", err)
+	}
+	if !reflect.DeepEqual(result, ctrl.Result{}) {
+		t.Errorf("Expected empty result, got: %+v", result)
+	}
+
+	// 3. Verify rule was created and finalizer was added
+	env.AssertRuleExistsByName(t, "default/test-service:http")
+
+	// Get the updated service from the fake client to check finalizer
+	updatedService := &corev1.Service{}
+	err = env.FakeClient.Get(ctx, types.NamespacedName{
+		Name:      service.Name,
+		Namespace: service.Namespace,
+	}, updatedService)
+	if err != nil {
+		t.Fatalf("Failed to get updated service: %v", err)
+	}
+
+	if !updatedService.GetDeletionTimestamp().IsZero() {
+		t.Error("Service should not be marked for deletion yet")
+	}
+
+	// 4. Simulate UPDATE event by marking service for deletion (simulate kubectl delete)
+	updatedService.DeletionTimestamp = &metav1.Time{Time: time.Now()}
+	if err := env.UpdateService(ctx, updatedService); err != nil {
+		t.Fatalf("Failed to mark service for deletion: %v", err)
+	}
+
+	// 5. Reconcile again - this should trigger deletion detection and cleanup
+	result, err = env.Controller.Reconcile(ctx, req)
+	if err != nil {
+		t.Errorf("Deletion reconcile failed: %v", err)
+	}
+
+	// 6. Verify cleanup occurred - rule should be deleted and finalizer removed
+	env.AssertRuleDoesNotExistByName(t, "default/test-service:http")
+
+	// Get final service state to verify finalizer was removed
+	finalService := &corev1.Service{}
+	err = env.FakeClient.Get(ctx, types.NamespacedName{
+		Name:      service.Name,
+		Namespace: service.Namespace,
+	}, finalService)
+	if err != nil {
+		t.Fatalf("Failed to get final service state: %v", err)
+	}
+
+	// Verify finalizer was removed (service should be deletable by Kubernetes)
+	hasFinalizer := false
+	for _, finalizer := range finalService.Finalizers {
+		if finalizer == config.FinalizerLabel {
+			hasFinalizer = true
+			break
+		}
+	}
+	if hasFinalizer {
+		t.Error("Finalizer should have been removed during cleanup")
+	}
+
+	t.Log("✅ Deletion detection full flow test passed - UPDATE event triggered cleanup correctly")
 }

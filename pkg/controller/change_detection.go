@@ -27,6 +27,8 @@ type ChangeContext struct {
 	SpecChanged bool               `json:"spec_changed"`
 	PortChanges []PortChangeDetail `json:"port_changes,omitempty"`
 
+	DeletionChanged bool `json:"deletion_changed"`
+
 	IsInitialSync    bool     `json:"is_initial_sync,omitempty"`
 	ServiceKey       string   `json:"service_key"`
 	ServiceNamespace string   `json:"-"`                            // Not serialized, derived from ServiceKey
@@ -43,6 +45,7 @@ type ChangeContextSerializable struct {
 	OldAnnotation     string             `json:"old_annotation,omitempty"`
 	NewAnnotation     string             `json:"new_annotation,omitempty"`
 	SpecChanged       bool               `json:"spec_changed"`
+	DeletionChanged   bool               `json:"deletion_changed"`
 	IsInitialSync     bool               `json:"is_initial_sync,omitempty"`
 	PortChanges       []PortChangeDetail `json:"port_changes,omitempty"`
 	ServiceKey        string             `json:"service_key"`
@@ -61,10 +64,11 @@ type PortChangeDetail struct {
 func (c *ChangeContext) HasRelevantChanges() bool {
 	// Don't consider changes during initial sync
 	if c.IsInitialSync {
+		fmt.Println("triggered", c.IsInitialSync)
 		return false
 	}
 
-	return c.IPChanged || c.AnnotationChanged || c.SpecChanged
+	return c.IPChanged || c.AnnotationChanged || c.SpecChanged || c.DeletionChanged
 }
 
 // ErrorContext stores persistent error information for service
@@ -94,6 +98,15 @@ func analyzeChanges(oldSvc, newSvc *corev1.Service) *ChangeContext {
 		ServiceKey:       fmt.Sprintf("%s/%s", newSvc.Namespace, newSvc.Name),
 		ServiceNamespace: newSvc.Namespace,
 		ServiceName:      newSvc.Name,
+	}
+
+	// 🔥 NEW: Check if service is being marked for deletion (check first for early return)
+	oldDeletionTimestamp := oldSvc.GetDeletionTimestamp()
+	newDeletionTimestamp := newSvc.GetDeletionTimestamp()
+
+	if oldDeletionTimestamp.IsZero() && !newDeletionTimestamp.IsZero() {
+		context.DeletionChanged = true
+		return context // Early return - deletion is most critical
 	}
 
 	// IP changes
@@ -201,6 +214,7 @@ func serializeChangeContext(context *ChangeContext) (string, error) {
 		OldAnnotation:     context.OldAnnotation,
 		NewAnnotation:     context.NewAnnotation,
 		SpecChanged:       context.SpecChanged,
+		DeletionChanged:   context.DeletionChanged,
 		PortChanges:       context.PortChanges,
 		ServiceKey:        context.ServiceKey,
 		PortForwardRules:  context.PortForwardRules,
@@ -299,6 +313,7 @@ func ExtractChangeContextForTest(contextJSON, fallbackNamespace, fallbackName st
 			OldAnnotation:     serializable.OldAnnotation,
 			NewAnnotation:     serializable.NewAnnotation,
 			SpecChanged:       serializable.SpecChanged,
+			DeletionChanged:   serializable.DeletionChanged,
 			PortChanges:       serializable.PortChanges,
 			ServiceKey:        serializable.ServiceKey,
 			ServiceNamespace:  namespace,

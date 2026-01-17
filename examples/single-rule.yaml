@@ -7,13 +7,16 @@ kind: Service
 metadata:
   name: web-service
   annotations:
-    unifi-port-forwarder/ports: "89:http"
+    unifi-port-forwarder/ports: "89:http,91:https"
 spec:
   selector:
     app: web-service
   ports:
     - name: http
       port: 8080
+      targetPort: 80
+    - name: https
+      port: 8181
       targetPort: 80
   type: LoadBalancer
 ###
@@ -28,7 +31,7 @@ metadata:
     unifi-port-forwarder/ports: "3001:http"
 spec:
   selector:
-    app: web-service
+    app: web-service2
   ports:
     - name: http
       port: 3000

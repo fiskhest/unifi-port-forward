@@ -121,9 +121,26 @@ func (f *FakeKubernetesClient) List(ctx context.Context, list client.ObjectList,
 	return nil
 }
 
-// Patch implements controller-runtime client.Client interface (basic implementation)
+// Patch implements controller-runtime client.Client interface
 func (f *FakeKubernetesClient) Patch(ctx context.Context, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
-	// For now, just implement as no-op since not used in our controller
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	service, ok := obj.(*v1.Service)
+	if !ok {
+		return fmt.Errorf("fake client only supports Service objects")
+	}
+
+	// Get existing service to ensure it exists
+	key := fmt.Sprintf("%s/%s", service.Namespace, service.Name)
+	_, exists := f.Services[key]
+	if !exists {
+		return errors.NewNotFound(v1.Resource("services"), service.Name)
+	}
+
+	// For MergePatch, simply update the existing service with the patched version
+	// This is simplified but sufficient for our tests
+	f.Services[key] = service.DeepCopy()
 	return nil
 }
 

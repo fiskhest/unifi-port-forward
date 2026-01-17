@@ -3,10 +3,12 @@ package controller
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"unifi-port-forwarder/pkg/routers"
 
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func TestChangeDetection_OtherChanges(t *testing.T) {
@@ -157,6 +159,158 @@ func TestChangeContextSerializationFormat(t *testing.T) {
 	}
 
 	t.Logf("Serialization format output:\n%s", serialized)
+}
+
+func TestAnalyzeChanges_DeletionDetection(t *testing.T) {
+	tests := []struct {
+		name              string
+		oldService        *corev1.Service
+		newService        *corev1.Service
+		expectDeletion    bool
+		expectEarlyReturn bool
+	}{
+		{
+			name: "Service marked for deletion",
+			oldService: &corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-service",
+					Namespace: "default",
+					Annotations: map[string]string{
+						"unifi-port-forwarder/ports": "8080:http",
+					},
+				},
+				Spec: corev1.ServiceSpec{
+					Ports: []corev1.ServicePort{{Name: "http", Port: 80, Protocol: corev1.ProtocolTCP}},
+				},
+			},
+			newService: &corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:              "test-service",
+					Namespace:         "default",
+					Annotations:       map[string]string{"unifi-port-forwarder/ports": "8080:http"},
+					DeletionTimestamp: &metav1.Time{Time: time.Now()},
+				},
+				Spec: corev1.ServiceSpec{
+					Ports: []corev1.ServicePort{{Name: "http", Port: 80, Protocol: corev1.ProtocolTCP}},
+				},
+			},
+			expectDeletion:    true,
+			expectEarlyReturn: true,
+		},
+		{
+			name: "Service already deleted - no change",
+			oldService: &corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:              "test-service",
+					Namespace:         "default",
+					DeletionTimestamp: &metav1.Time{Time: time.Now().Add(-time.Minute)},
+				},
+			},
+			newService: &corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:              "test-service",
+					Namespace:         "default",
+					DeletionTimestamp: &metav1.Time{Time: time.Now()},
+				},
+			},
+			expectDeletion:    false,
+			expectEarlyReturn: false,
+		},
+		{
+			name: "Service not deleted - no change",
+			oldService: &corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-service",
+					Namespace: "default",
+				},
+			},
+			newService: &corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-service",
+					Namespace: "default",
+				},
+			},
+			expectDeletion:    false,
+			expectEarlyReturn: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			context := analyzeChanges(tt.oldService, tt.newService)
+
+			if context.DeletionChanged != tt.expectDeletion {
+				t.Errorf("Expected DeletionChanged=%v, got %v", tt.expectDeletion, context.DeletionChanged)
+			}
+
+			if tt.expectDeletion && !context.HasRelevantChanges() {
+				t.Error("Expected HasRelevantChanges()=true when deletion detected")
+			}
+
+			if !tt.expectDeletion && context.DeletionChanged {
+				t.Error("Expected DeletionChanged=false when no deletion detected")
+			}
+
+			// Verify early return behavior - when deletion is detected, other changes should not be analyzed
+			if tt.expectEarlyReturn {
+				if context.IPChanged || context.AnnotationChanged || context.SpecChanged {
+					t.Error("Expected early return - no other changes should be analyzed when deletion detected")
+				}
+			}
+		})
+	}
+}
+
+func TestHasRelevantChanges_WithDeletionChanged(t *testing.T) {
+	tests := []struct {
+		name           string
+		changeContext  *ChangeContext
+		expectedResult bool
+	}{
+		{
+			name: "DeletionChanged only",
+			changeContext: &ChangeContext{
+				ServiceKey:      "default/test-service",
+				DeletionChanged: true,
+			},
+			expectedResult: true,
+		},
+		{
+			name: "DeletionChanged with other changes",
+			changeContext: &ChangeContext{
+				ServiceKey:        "default/test-service",
+				DeletionChanged:   true,
+				IPChanged:         true,
+				AnnotationChanged: true,
+			},
+			expectedResult: true,
+		},
+		{
+			name: "No changes",
+			changeContext: &ChangeContext{
+				ServiceKey: "default/test-service",
+			},
+			expectedResult: false,
+		},
+		{
+			name: "Other changes without deletion",
+			changeContext: &ChangeContext{
+				ServiceKey:        "default/test-service",
+				IPChanged:         true,
+				AnnotationChanged: true,
+			},
+			expectedResult: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := tt.changeContext.HasRelevantChanges()
+			if result != tt.expectedResult {
+				t.Errorf("Expected HasRelevantChanges()=%v, got %v", tt.expectedResult, result)
+			}
+		})
+	}
 }
 
 func TestCollectRulesForService(t *testing.T) {

@@ -24,6 +24,14 @@ import (
 	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
 )
 
+// getReqID generates a unique request ID for debugging
+func getReqID(ctx context.Context) string {
+	if reqID, ok := ctx.Value("requestID").(string); ok {
+		return reqID
+	}
+	return fmt.Sprintf("%d", time.Now().UnixNano())
+}
+
 // PortForwardReconciler reconciles Service resources
 type PortForwardReconciler struct {
 	client.Client
@@ -51,44 +59,78 @@ type PortForwardReconciler struct {
 func (r *PortForwardReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := ctrllog.FromContext(ctx).WithValues("namespace", req.Namespace, "name", req.Name)
 
-	// Check if maps need refresh (5-minute intervals or first run)
-	if r.needsMapRefresh() {
-		if err := r.refreshMaps(ctx); err != nil {
-			logger.Error(err, "Failed to refresh maps, continuing with existing")
-		}
-	}
+	logger.Info("🚀 RECONCILIATION STARTED",
+		"request_id", getReqID(ctx),
+		"namespace", req.Namespace,
+		"name", req.Name)
 
 	// Fetch the Service instance
 	service := &corev1.Service{}
 	if err := r.Get(ctx, req.NamespacedName, service); err != nil {
 		if errors.IsNotFound(err) {
-			// Service deleted - clean up port forwards
-			return r.handleServiceDeletion(ctx, req.NamespacedName)
+			logger.Info("🔍 SERVICE NOT FOUND - checking if cleanup needed",
+				"namespace", req.Namespace, "name", req.Name)
+
+			// CRITICAL FIX: Attempt cleanup even when service is not found
+			// This handles the race condition where service is deleted before reconciliation runs
+			if r.shouldAttemptCleanupForMissingService(req.NamespacedName) {
+				logger.Info("🧹 ATTEMPTING CLEANUP FOR MISSING SERVICE (RACE CONDITION)")
+				return r.handleMissingServiceCleanup(ctx, req.NamespacedName)
+			}
+
+			logger.Info("🚫 NO CLEANUP NEEDED FOR MISSING SERVICE")
+			return ctrl.Result{}, nil
 		}
-		logger.Error(err, "Failed to get service")
+		logger.Error(err, "❌ FAILED TO GET SERVICE")
 		return ctrl.Result{}, err
 	}
 
-	// Handle deletion with finalizer blocking
+	logger.Info("✅ SERVICE FETCHED SUCCESSFULLY",
+		"namespace", service.Namespace,
+		"name", service.Name,
+		"deletion_timestamp", service.DeletionTimestamp,
+		"deletion_timestamp_is_zero", service.DeletionTimestamp.IsZero(),
+		"has_finalizer", controllerutil.ContainsFinalizer(service, config.FinalizerLabel),
+		"finalizers", service.Finalizers)
+
+	// Handle deletion FIRST (like testcontroller) - before any other checks
+	logger.Info("🔍 CHECKING DELETION STATUS",
+		"deletion_timestamp_is_zero", service.DeletionTimestamp.IsZero(),
+		"has_finalizer", controllerutil.ContainsFinalizer(service, config.FinalizerLabel))
+
 	if !service.DeletionTimestamp.IsZero() {
+		logger.Info("🗑️ SERVICE IS MARKED FOR DELETION")
 		if controllerutil.ContainsFinalizer(service, config.FinalizerLabel) {
-			logger.Info("Service marked for deletion, performing finalizer cleanup")
-			return r.handleFinalizerCleanup(ctx, service)
+			logger.Info("🧹 CLEANUP REQUIRED - calling handleFinalizerCleanup")
+			result, err := r.handleFinalizerCleanup(ctx, service)
+			logger.Info("🧹 CLEANUP COMPLETED",
+				"requeue", result.Requeue,
+				"requeue_after", result.RequeueAfter,
+				"error", err)
+			return result, err
 		}
-		logger.V(1).Info("Service being deleted but no finalizer present")
+		logger.Info("🚫 NO FINALIZER - allowing deletion")
 		return ctrl.Result{}, nil
 	}
 
+	logger.Info("✅ SERVICE NOT DELETED - continuing normal processing")
+
 	// Extract LoadBalancer IP once for the entire reconciliation
 	lbIP := helpers.GetLBIP(service)
-	logger.V(1).Info("Extracted LoadBalancer IP", "ip", lbIP, "len_ingress", len(service.Status.LoadBalancer.Ingress))
+	logger.Info("🌐 EXTRACTED LOADBALANCER IP",
+		"ip", lbIP,
+		"has_ingress", len(service.Status.LoadBalancer.Ingress))
+
 	if lbIP == "" {
-		logger.V(1).Info("Service has no LoadBalancer IP, skipping gracefully")
+		logger.Info("🚫 NO LOADBALANCER IP - skipping")
 		return ctrl.Result{}, nil
 	}
 
 	// Check if service needs port forwarding and add finalizer if needed
 	shouldManage := r.shouldProcessService(ctx, service, lbIP)
+	logger.Info("🔍 SERVICE PROCESSING CHECK",
+		"should_manage", shouldManage,
+		"has_annotations", service.Annotations != nil)
 
 	// Add finalizer if service needs management and doesn't have it
 	if shouldManage && !controllerutil.ContainsFinalizer(service, config.FinalizerLabel) {
@@ -181,6 +223,7 @@ func (r *PortForwardReconciler) handleServiceDeletion(ctx context.Context, names
 	}
 
 	// Remove all rules that belong to this service
+	// service := fmt.Sprintf("%s/%s:%s", namespacedName.Namespace, namespacedName.Name, namespacedName)
 	servicePrefix := fmt.Sprintf("%s/%s:", namespacedName.Namespace, namespacedName.Name)
 	removedCount := 0
 	var cleanupErrors []string
@@ -332,70 +375,92 @@ func (r *PortForwardReconciler) processAllChanges(ctx context.Context, service *
 }
 
 // handleFinalizerCleanup performs cleanup when service is being deleted with finalizer
+// Simplified pattern - cleanup first, then always remove finalizer (never hangs)
 func (r *PortForwardReconciler) handleFinalizerCleanup(ctx context.Context, service *corev1.Service) (ctrl.Result, error) {
 	logger := ctrllog.FromContext(ctx).WithValues("namespace", service.Namespace, "name", service.Name)
-	logger.Info("Starting finalizer cleanup for service deletion")
+	logger.Info("🧹 FINALIZER CLEANUP STARTED")
 
-	// Perform best-effort cleanup without annotation tracking (annotations not available during deletion)
-	cleanupErr := r.performBestEffortCleanup(ctx, service)
+	// Attempt cleanup with timeout (best-effort, never blocks finalizer removal)
+	logger.Info("🔍 SETTING UP CLEANUP TIMEOUT")
+	cleanupCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
 
-	// Refresh service object to ensure we have the latest resource version before removing finalizer
-	// This prevents conflicts and ensures finalizer removal works correctly
-	currentService := &corev1.Service{}
-	if err := r.Get(ctx, client.ObjectKey{Namespace: service.Namespace, Name: service.Name}, currentService); err != nil {
-		logger.Error(err, "Failed to refresh service object for finalizer removal")
-		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+	logger.Info("🔍 CALLING finalizeService")
+	if err := r.finalizeService(cleanupCtx, service); err != nil {
+		logger.Error(err, "🚫 CLEANUP FAILED, but removing finalizer anyway")
+	} else {
+		logger.Info("✅ CLEANUP SUCCEEDED")
 	}
 
-	// Create event for visibility
-	eventMessage := fmt.Sprintf("Finalizer cleanup completed for service: %s", service.Name)
-	if cleanupErr != nil {
-		// Still remove finalizer even if cleanup failed to prevent deletion from hanging
-		logger.Info("Removing finalizer after cleanup attempt (cleanup had errors)")
-		controllerutil.RemoveFinalizer(currentService, config.FinalizerLabel)
-		if err := r.Update(ctx, currentService); err != nil {
-			logger.Error(err, "Failed to remove finalizer after cleanup errors")
-			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
-		}
-		r.createEvent(ctx, currentService, "FinalizerCleanupCompleted", eventMessage)
-		logger.Info("Finalizer removed despite cleanup errors, service can now be deleted")
-		return ctrl.Result{}, nil
+	// Always remove finalizer - never blocked by cleanup failures
+	logger.Info("🗑️ REMOVING FINALIZER")
+	finalizerBefore := service.Finalizers
+	controllerutil.RemoveFinalizer(service, config.FinalizerLabel)
+	logger.Info("🔍 FINALIZER STATUS",
+		"before", finalizerBefore,
+		"after", service.Finalizers,
+		"removed", !controllerutil.ContainsFinalizer(service, config.FinalizerLabel))
+
+	logger.Info("💾 UPDATING SERVICE OBJECT")
+	if err := r.Update(ctx, service); err != nil {
+		logger.Error(err, "❌ FAILED TO REMOVE FINALIZER", "error", err)
+		return ctrl.Result{}, err
 	}
 
-	// Remove finalizer after successful cleanup
-	logger.Info("Removing finalizer after successful cleanup")
-	controllerutil.RemoveFinalizer(currentService, config.FinalizerLabel)
-	if err := r.Update(ctx, currentService); err != nil {
-		logger.Error(err, "Failed to remove finalizer")
-		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
-	}
-	r.createEvent(ctx, currentService, "FinalizerCleanupCompleted", eventMessage)
-
-	logger.Info("Finalizer cleanup completed, service can now be deleted")
+	logger.Info("✅ FINALIZER REMOVED SUCCESSFULLY - service can now be deleted")
 	return ctrl.Result{}, nil
 }
-func (r *PortForwardReconciler) performBestEffortCleanup(ctx context.Context, service *corev1.Service) error {
-	logger := ctrllog.FromContext(ctx).WithValues("namespace", service.Namespace, "name", service.Name)
-	namespacedName := client.ObjectKey{Namespace: service.Namespace, Name: service.Name}
 
-	// Get current port forward rules
+// finalizeService handles cleanup logic when a service with our finalizer is deleted
+// Simplified pattern - actually deletes port forward rules from router
+func (r *PortForwardReconciler) finalizeService(ctx context.Context, service *corev1.Service) error {
+	logger := ctrllog.FromContext(ctx).WithValues("namespace", service.Namespace, "name", service.Name)
+	logger.Info("🔍 FINALIZE SERVICE STARTED")
+
+	// Get current port forward rules with timeout protection
+	logger.Info("📡 LISTING CURRENT PORT FORWARDS FROM ROUTER")
 	currentRules, err := r.Router.ListAllPortForwards(ctx)
 	if err != nil {
-		logger.Error(err, "Failed to list current port forwards for cleanup")
-		return err
+		logger.Error(err, "❌ FAILED TO LIST CURRENT PORT FORWARDS FOR CLEANUP")
+		return err // Return error but don't block finalizer removal
 	}
 
+	logger.Info("✅ LISTED PORT FORWARDS", "count", len(currentRules))
+
 	// Remove all rules that belong to this service
-	servicePrefix := fmt.Sprintf("%s/%s:", namespacedName.Namespace, namespacedName.Name)
+	servicePrefix := fmt.Sprintf("%s/%s:", service.Namespace, service.Name)
+	logger.Info("🔍 SEARCHING FOR RULES", "service_prefix", servicePrefix)
+
 	removedCount := 0
 	var cleanupErrors []string
 
-	for _, rule := range currentRules {
+	for i, rule := range currentRules {
+		logger.Info("🔍 CHECKING RULE",
+			"index", i,
+			"rule_name", rule.Name,
+			"matches_prefix", strings.HasPrefix(rule.Name, servicePrefix))
+
 		if strings.HasPrefix(rule.Name, servicePrefix) {
+			logger.Info("🗑️ DELETING RULE", "rule_name", rule.Name)
+
+			// Convert string ports to int for PortConfig
+			dstPort := 0
+			if rule.DstPort != "" {
+				if p, err := strconv.Atoi(rule.DstPort); err == nil {
+					dstPort = p
+				}
+			}
+			fwdPort := 0
+			if rule.FwdPort != "" {
+				if p, err := strconv.Atoi(rule.FwdPort); err == nil {
+					fwdPort = p
+				}
+			}
+
 			config := routers.PortConfig{
 				Name:      rule.Name,
-				DstPort:   r.parseIntField(rule.DstPort),
-				FwdPort:   r.parseIntField(rule.FwdPort),
+				DstPort:   dstPort,
+				FwdPort:   fwdPort,
 				DstIP:     rule.DestinationIP,
 				Protocol:  rule.Proto,
 				Enabled:   rule.Enabled,
@@ -403,24 +468,35 @@ func (r *PortForwardReconciler) performBestEffortCleanup(ctx context.Context, se
 				SrcIP:     rule.Src,
 			}
 
+			logger.Info("📡 CALLING ROUTER.RemovePort",
+				"rule_name", rule.Name,
+				"dst_port", config.DstPort,
+				"fwd_port", config.FwdPort)
+
 			if err := r.Router.RemovePort(ctx, config); err != nil {
-				logger.Error(err, "Failed to remove port forward rule during finalizer cleanup",
-					"port", config.DstPort, "rule_name", rule.Name)
+				logger.Error(err, "❌ FAILED TO REMOVE PORT FORWARD RULE DURING CLEANUP",
+					"port", config.DstPort,
+					"rule_name", rule.Name,
+					"error", err)
 				cleanupErrors = append(cleanupErrors, fmt.Sprintf("port %d: %v", config.DstPort, err))
 			} else {
 				removedCount++
-				logger.Info("Successfully removed port forward rule during finalizer cleanup",
-					"port", config.DstPort, "rule_name", rule.Name)
+				logger.Info("✅ SUCCESSFULLY REMOVED PORT FORWARD RULE DURING CLEANUP",
+					"port", config.DstPort,
+					"rule_name", rule.Name)
 				// Add port conflict tracking cleanup
 				helpers.UnmarkPortUsed(config.DstPort)
 			}
 		}
 	}
 
-	logger.Info("Finalizer cleanup completed",
-		"removed_count", removedCount, "errors_count", len(cleanupErrors))
+	logger.Info("🧹 FINALIZE SERVICE COMPLETED",
+		"total_rules", len(currentRules),
+		"rules_matched", removedCount,
+		"rules_removed", removedCount,
+		"errors_count", len(cleanupErrors))
 
-	// Return error summary if there were cleanup failures
+	// Return error summary if there were cleanup failures (but don't block finalizer removal)
 	if len(cleanupErrors) > 0 {
 		return fmt.Errorf("cleanup completed with %d failures: %s", len(cleanupErrors), strings.Join(cleanupErrors, "; "))
 	}
@@ -695,25 +771,114 @@ func (r *PortForwardReconciler) parseIntField(field string) int {
 	return 0
 }
 
+// shouldAttemptCleanupForMissingService determines if we should attempt cleanup for a missing service
+// Uses a simple heuristic: always attempt cleanup for services that could be ours
+func (r *PortForwardReconciler) shouldAttemptCleanupForMissingService(namespacedName client.ObjectKey) bool {
+	logger := ctrllog.FromContext(context.Background()).WithValues(
+		"namespace", namespacedName.Namespace,
+		"name", namespacedName.Name)
+
+	logger.Info("🔍 DECISION: Always attempting cleanup for missing service",
+		"service_key", namespacedName.String())
+
+	// For now, always attempt cleanup for missing services to prevent race conditions
+	// This is safer than potentially missing cleanup due to race conditions
+	return true
+}
+
+// handleMissingServiceCleanup handles cleanup when service object is already deleted from Kubernetes
+// This is the critical race condition recovery path
+func (r *PortForwardReconciler) handleMissingServiceCleanup(ctx context.Context, namespacedName client.ObjectKey) (ctrl.Result, error) {
+	logger := ctrllog.FromContext(ctx).WithValues("namespace", namespacedName.Namespace, "name", namespacedName.Name)
+	logger.Info("🧹 MISSING SERVICE CLEANUP STARTED - RACE CONDITION RECOVERY")
+
+	// Get current router rules and delete any that match this service
+	currentRules, err := r.Router.ListAllPortForwards(ctx)
+	if err != nil {
+		logger.Error(err, "❌ FAILED TO LIST ROUTER RULES FOR MISSING SERVICE CLEANUP")
+		return ctrl.Result{}, err
+	}
+
+	logger.Info("📡 LISTED CURRENT PORT FORWARDS", "count", len(currentRules))
+
+	servicePrefix := fmt.Sprintf("%s/%s:", namespacedName.Namespace, namespacedName.Name)
+	logger.Info("🔍 SEARCHING FOR RULES", "service_prefix", servicePrefix)
+
+	removedCount := 0
+	for i, rule := range currentRules {
+		logger.Info("🔍 CHECKING RULE",
+			"index", i,
+			"rule_name", rule.Name,
+			"matches_prefix", strings.HasPrefix(rule.Name, servicePrefix))
+
+		if strings.HasPrefix(rule.Name, servicePrefix) {
+			logger.Info("🗑️ DELETING RULE FOR MISSING SERVICE", "rule_name", rule.Name)
+
+			// Convert string ports to int for PortConfig
+			dstPort := 0
+			if rule.DstPort != "" {
+				if p, err := strconv.Atoi(rule.DstPort); err == nil {
+					dstPort = p
+				}
+			}
+			fwdPort := 0
+			if rule.FwdPort != "" {
+				if p, err := strconv.Atoi(rule.FwdPort); err == nil {
+					fwdPort = p
+				}
+			}
+
+			config := routers.PortConfig{
+				Name:      rule.Name,
+				DstPort:   dstPort,
+				FwdPort:   fwdPort,
+				DstIP:     rule.DestinationIP,
+				Protocol:  rule.Proto,
+				Enabled:   rule.Enabled,
+				Interface: rule.PfwdInterface,
+				SrcIP:     rule.Src,
+			}
+
+			logger.Info("📡 CALLING ROUTER.RemovePort",
+				"rule_name", rule.Name,
+				"dst_port", config.DstPort,
+				"fwd_port", config.FwdPort)
+
+			if err := r.Router.RemovePort(ctx, config); err != nil {
+				logger.Error(err, "❌ FAILED TO REMOVE PORT FORWARD RULE FOR MISSING SERVICE",
+					"rule_name", rule.Name,
+					"dst_port", config.DstPort,
+					"error", err)
+			} else {
+				removedCount++
+				logger.Info("✅ SUCCESSFULLY REMOVED PORT FORWARD RULE FOR MISSING SERVICE",
+					"rule_name", rule.Name,
+					"dst_port", config.DstPort)
+				helpers.UnmarkPortUsed(config.DstPort)
+			}
+		}
+	}
+
+	logger.Info("🧹 MISSING SERVICE CLEANUP COMPLETED",
+		"service_key", namespacedName.String(),
+		"total_rules", len(currentRules),
+		"rules_removed", removedCount)
+
+	// Return success - service is already deleted, no need to requeue
+	return ctrl.Result{}, nil
+}
+
 // SetupWithManager sets up the controller with a manager
 func (r *PortForwardReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	// Initialize internal state maps
 	r.ruleOwnerMap = make(map[string]string)
 	r.serviceRuleMap = make(map[string][]*unifi.PortForward)
 
-	// Initialize map version timestamp
-	r.mapVersion = 0
-
 	// Initialize recorder
 	r.Recorder = mgr.GetEventRecorderFor("unifi-port-forwarder")
 
 	// 🆕 Initialize event publisher
 	r.EventPublisher = NewEventPublisher(r.Client, r.Recorder, r.Scheme)
-
-	// Start periodic refresh if not already running
-	if r.refreshTicker == nil {
-		r.StartPeriodicRefresh(5 * time.Minute)
-	}
 
 	// Use enhanced predicate for unified change detection
 	eventFilter := ServiceChangePredicate{}
@@ -725,7 +890,6 @@ func (r *PortForwardReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
-// portConfigsMatch compares current router rules with desired configurations
 // Returns true if the states are identical, false if changes are needed
 func (r *PortForwardReconciler) portConfigsMatch(ctx context.Context, currentRules []*unifi.PortForward, desiredConfigs []routers.PortConfig, expectedIP string) bool {
 	// Quick length check
