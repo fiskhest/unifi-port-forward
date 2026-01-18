@@ -397,7 +397,7 @@ func (r *PortForwardReconciler) detectChanges(ctx context.Context, service *core
 	var currentRules []*unifi.PortForward
 	expectedServiceKey := fmt.Sprintf("%s/%s", service.Namespace, service.Name)
 
-	ctrllog.FromContext(ctx).Info("Detecting changes for service",
+	ctrllog.FromContext(ctx).V(1).Info("Detecting changes for service",
 		"expected_service_key", expectedServiceKey,
 		"total_router_rules", len(allCurrentRules))
 
@@ -418,7 +418,7 @@ func (r *PortForwardReconciler) detectChanges(ctx context.Context, service *core
 		}
 	}
 
-	ctrllog.FromContext(ctx).Info("Service rule filtering completed",
+	ctrllog.FromContext(ctx).V(1).Info("Service rule filtering completed",
 		"service", service.Name,
 		"namespace", service.Namespace,
 		"matched_rules", len(currentRules),

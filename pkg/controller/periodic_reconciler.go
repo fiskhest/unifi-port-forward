@@ -149,7 +149,7 @@ func (r *PeriodicReconciler) performFullReconciliation(ctx context.Context, star
 	}
 
 	// Add single start log entry
-	logger.Info("Starting periodic reconciliation cycle", "total_services", len(driftAnalyses))
+	logger.V(1).Info("Starting periodic reconciliation cycle", "total_services", len(driftAnalyses))
 
 	// 4. Process each service with per-service event publishing only when drift exists
 	servicesWithDrift := 0

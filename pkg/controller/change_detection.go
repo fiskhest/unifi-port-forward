@@ -1,7 +1,7 @@
 package controller
 
 import (
-	"encoding/json"
+	// "encoding/json"
 	"fmt"
 	"reflect"
 	"strings"
@@ -232,51 +232,51 @@ func parseServiceKey(serviceKey string) (namespace, name string) {
 // }
 
 // ExtractChangeContextForTest is a test helper function to expose extraction with fallback
-func ExtractChangeContextForTest(contextJSON, fallbackNamespace, fallbackName string) (*ChangeContext, error) {
-	if contextJSON == "" {
-		return &ChangeContext{
-			ServiceKey:       fmt.Sprintf("%s/%s", fallbackNamespace, fallbackName),
-			ServiceNamespace: fallbackNamespace,
-			ServiceName:      fallbackName,
-		}, nil
-	}
+// func ExtractChangeContextForTest(contextJSON, fallbackNamespace, fallbackName string) (*ChangeContext, error) {
+// 	if contextJSON == "" {
+// 		return &ChangeContext{
+// 			ServiceKey:       fmt.Sprintf("%s/%s", fallbackNamespace, fallbackName),
+// 			ServiceNamespace: fallbackNamespace,
+// 			ServiceName:      fallbackName,
+// 		}, nil
+// 	}
 
-	// Try to unmarshal as new format first (without redundant fields)
-	var serializable ChangeContextSerializable
-	if err := json.Unmarshal([]byte(contextJSON), &serializable); err == nil {
-		// Successfully parsed new format, convert to full ChangeContext
-		namespace, name := parseServiceKey(serializable.ServiceKey)
-		return &ChangeContext{
-			IPChanged:         serializable.IPChanged,
-			OldIP:             serializable.OldIP,
-			NewIP:             serializable.NewIP,
-			AnnotationChanged: serializable.AnnotationChanged,
-			OldAnnotation:     serializable.OldAnnotation,
-			NewAnnotation:     serializable.NewAnnotation,
-			SpecChanged:       serializable.SpecChanged,
-			DeletionChanged:   serializable.DeletionChanged,
-			PortChanges:       serializable.PortChanges,
-			ServiceKey:        serializable.ServiceKey,
-			ServiceNamespace:  namespace,
-			ServiceName:       name,
-		}, nil
-	}
+// 	// Try to unmarshal as new format first (without redundant fields)
+// 	var serializable ChangeContextSerializable
+// 	if err := json.Unmarshal([]byte(contextJSON), &serializable); err == nil {
+// 		// Successfully parsed new format, convert to full ChangeContext
+// 		namespace, name := parseServiceKey(serializable.ServiceKey)
+// 		return &ChangeContext{
+// 			IPChanged:         serializable.IPChanged,
+// 			OldIP:             serializable.OldIP,
+// 			NewIP:             serializable.NewIP,
+// 			AnnotationChanged: serializable.AnnotationChanged,
+// 			OldAnnotation:     serializable.OldAnnotation,
+// 			NewAnnotation:     serializable.NewAnnotation,
+// 			SpecChanged:       serializable.SpecChanged,
+// 			DeletionChanged:   serializable.DeletionChanged,
+// 			PortChanges:       serializable.PortChanges,
+// 			ServiceKey:        serializable.ServiceKey,
+// 			ServiceNamespace:  namespace,
+// 			ServiceName:       name,
+// 		}, nil
+// 	}
 
-	// Fallback: try to unmarshal as old format (with redundant fields)
-	var context ChangeContext
-	if err := json.Unmarshal([]byte(contextJSON), &context); err != nil {
-		return nil, fmt.Errorf("failed to deserialize change context: %w", err)
-	}
+// 	// Fallback: try to unmarshal as old format (with redundant fields)
+// 	var context ChangeContext
+// 	if err := json.Unmarshal([]byte(contextJSON), &context); err != nil {
+// 		return nil, fmt.Errorf("failed to deserialize change context: %w", err)
+// 	}
 
-	// Ensure ServiceNamespace and ServiceName are populated
-	if context.ServiceNamespace == "" || context.ServiceName == "" {
-		namespace, name := parseServiceKey(context.ServiceKey)
-		context.ServiceNamespace = namespace
-		context.ServiceName = name
-	}
+// 	// Ensure ServiceNamespace and ServiceName are populated
+// 	if context.ServiceNamespace == "" || context.ServiceName == "" {
+// 		namespace, name := parseServiceKey(context.ServiceKey)
+// 		context.ServiceNamespace = namespace
+// 		context.ServiceName = name
+// 	}
 
-	return &context, nil
-}
+// 	return &context, nil
+// }
 
 // compareIPsWithRouterState compares desired IP against actual router state to detect real IP changes
 // This prevents false positives when service status is empty or inconsistent
