@@ -1,10 +1,8 @@
 package controller
 
 import (
-	// "encoding/json"
 	"fmt"
 	"reflect"
-	"strings"
 
 	"unifi-port-forwarder/pkg/config"
 	"unifi-port-forwarder/pkg/helpers"
@@ -216,16 +214,6 @@ func collectRulesForService(configs []routers.PortConfig) []string {
 	return rules
 }
 
-// parseServiceKey extracts namespace and name from a service key (format: "namespace/name")
-func parseServiceKey(serviceKey string) (namespace, name string) {
-	parts := strings.SplitN(serviceKey, "/", 2)
-	if len(parts) == 2 {
-		return parts[0], parts[1]
-	}
-	// Fallback if format is unexpected
-	return serviceKey, ""
-}
-
 // SerializeChangeContextForTest is a test helper function to expose serialization
 // func SerializeChangeContextForTest(context *ChangeContext) (string, error) {
 // 	return serializeChangeContext(context)
@@ -310,7 +298,7 @@ func logServiceVsRouterStateDifferences(serviceIP string, currentRules []*unifi.
 		return // No rules to compare against
 	}
 
-	// Get the IP from the first router rule for comparison
+	// Get the IP from the first service-specific rule (currentRules are already filtered for this service)
 	routerIP := currentRules[0].Fwd
 
 	// Check for differences between service status and router state

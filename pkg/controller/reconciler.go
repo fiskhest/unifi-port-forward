@@ -138,18 +138,31 @@ func (r *PortForwardReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	}
 
 	// Get current router state once per reconcile to ensure data consistency
-	currentRules, err := r.Router.ListAllPortForwards(ctx)
+	allCurrentRules, err := r.Router.ListAllPortForwards(ctx)
 	if err != nil {
 		logger.Error(err, "Failed to list current port forwards")
 		return ctrl.Result{}, err
 	}
 
-	// Log service vs router state differences for debugging
-	logServiceVsRouterStateDifferences(lbIP, currentRules, service.Name, service.Namespace)
-
 	// Create change context for this reconciliation using fresh router state
 	serviceKey := fmt.Sprintf("%s/%s", service.Namespace, service.Name)
-	changeContext := r.detectChanges(ctx, service, serviceKey, currentRules)
+	changeContext := r.detectChanges(ctx, service, serviceKey, allCurrentRules)
+
+	// Filter rules for this specific service for logging
+	var currentRules []*unifi.PortForward
+	for _, rule := range allCurrentRules {
+		// Extract service key from rule name (format: "namespace/service-name:port-name")
+		parts := strings.SplitN(rule.Name, ":", 3)
+		if len(parts) >= 2 {
+			ruleServiceKey := parts[0] // parts[0] is "namespace/service-name"
+			if ruleServiceKey == serviceKey {
+				currentRules = append(currentRules, rule)
+			}
+		}
+	}
+
+	// Log service vs router state differences for debugging (using filtered service-specific rules)
+	logServiceVsRouterStateDifferences(lbIP, currentRules, service.Name, service.Namespace)
 
 	// Skip change processing during initial sync
 	if changeContext.IsInitialSync {
