@@ -144,6 +144,9 @@ func (r *PortForwardReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		return ctrl.Result{}, err
 	}
 
+	// Log service vs router state differences for debugging
+	logServiceVsRouterStateDifferences(lbIP, currentRules, service.Name, service.Namespace)
+
 	// Create change context for this reconciliation using fresh router state
 	serviceKey := fmt.Sprintf("%s/%s", service.Namespace, service.Name)
 	changeContext := r.detectChanges(ctx, service, serviceKey, currentRules)
@@ -726,13 +729,12 @@ func (r *PortForwardReconciler) portConfigsMatch(ctx context.Context, currentRul
 
 // fallbackToIPChangeDetection provides fallback when desired state calculation fails
 func (r *PortForwardReconciler) fallbackToIPChangeDetection(currentRules []*unifi.PortForward, lbIP string, changeContext *ChangeContext) *ChangeContext {
-	for _, rule := range currentRules {
-		if rule.DestinationIP != lbIP {
-			changeContext.IPChanged = true
-			changeContext.OldIP = rule.DestinationIP
-			changeContext.NewIP = lbIP
-			break
-		}
+	// Use router-state comparison (more reliable than service status)
+	ipChanged, oldIP, newIP := compareIPsWithRouterState(lbIP, currentRules)
+	if ipChanged {
+		changeContext.IPChanged = true
+		changeContext.OldIP = oldIP
+		changeContext.NewIP = newIP
 	}
 	return changeContext
 }
@@ -742,16 +744,12 @@ func (r *PortForwardReconciler) analyzeDetailedChanges(currentRules []*unifi.Por
 	// Set IsInitialSync to false for processing
 	changeContext.IsInitialSync = false
 
-	// Check for IP changes in existing rules
-	if len(currentRules) > 0 && len(desiredConfigs) > 0 {
-		for _, rule := range currentRules {
-			if rule.DestinationIP != lbIP {
-				changeContext.IPChanged = true
-				changeContext.OldIP = rule.DestinationIP
-				changeContext.NewIP = lbIP
-				break
-			}
-		}
+	// Check for IP changes using router-state comparison (more reliable than service status)
+	ipChanged, oldIP, newIP := compareIPsWithRouterState(lbIP, currentRules)
+	if ipChanged {
+		changeContext.IPChanged = true
+		changeContext.OldIP = oldIP
+		changeContext.NewIP = newIP
 	}
 
 	if len(currentRules) == 0 && len(desiredConfigs) > 0 {

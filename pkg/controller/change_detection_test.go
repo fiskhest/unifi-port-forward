@@ -4,6 +4,7 @@ import (
 	// "strings"
 	"testing"
 	// "time"
+	"github.com/filipowm/go-unifi/unifi"
 
 	"unifi-port-forwarder/pkg/routers"
 
@@ -353,5 +354,125 @@ func TestCollectRulesForService(t *testing.T) {
 		if i >= len(rules) || rules[i] != expected {
 			t.Errorf("Expected rule %d to be '%s', got '%s'", i, expected, rules[i])
 		}
+	}
+}
+
+func TestCompareIPsWithRouterState_RealIPChange(t *testing.T) {
+	// Test case: Real IP change - router has different IP than desired
+	desiredIP := "192.168.1.100"
+	currentRules := []*unifi.PortForward{
+		{
+			DstPort: "80",
+			Fwd:     "192.168.1.50", // Different IP
+			Name:    "default/test-service:http",
+		},
+	}
+
+	ipChanged, oldIP, newIP := compareIPsWithRouterState(desiredIP, currentRules)
+
+	if !ipChanged {
+		t.Errorf("Expected IP changed to be true, got false")
+	}
+	if oldIP != "192.168.1.50" {
+		t.Errorf("Expected old IP to be '192.168.1.50', got '%s'", oldIP)
+	}
+	if newIP != "192.168.1.100" {
+		t.Errorf("Expected new IP to be '192.168.1.100', got '%s'", newIP)
+	}
+}
+
+func TestCompareIPsWithRouterState_NoIPChange(t *testing.T) {
+	// Test case: No IP change - router already has correct IP
+	desiredIP := "192.168.1.100"
+	currentRules := []*unifi.PortForward{
+		{
+			DstPort: "80",
+			Fwd:     "192.168.1.100", // Same IP
+			Name:    "default/test-service:http",
+		},
+	}
+
+	ipChanged, oldIP, newIP := compareIPsWithRouterState(desiredIP, currentRules)
+
+	if ipChanged {
+		t.Errorf("Expected IP changed to be false, got true")
+	}
+	if oldIP != "" {
+		t.Errorf("Expected old IP to be empty, got '%s'", oldIP)
+	}
+	if newIP != "" {
+		t.Errorf("Expected new IP to be empty, got '%s'", newIP)
+	}
+}
+
+func TestCompareIPsWithRouterState_ServiceStatusEmpty(t *testing.T) {
+	// Test case: Service status empty but router has correct IP
+	// This was the original bug scenario
+	desiredIP := "" // Empty service IP (simulating service status issue)
+	currentRules := []*unifi.PortForward{
+		{
+			DstPort: "89",
+			Fwd:     "192.168.72.6", // Router has correct IP
+			Name:    "unifi-port-forwarder/web-service:http",
+		},
+	}
+
+	ipChanged, oldIP, newIP := compareIPsWithRouterState(desiredIP, currentRules)
+
+	if ipChanged {
+		t.Errorf("Expected IP changed to be false when desired IP is empty, got true")
+	}
+	if oldIP != "" {
+		t.Errorf("Expected old IP to be empty when desired IP is empty, got '%s'", oldIP)
+	}
+	if newIP != "" {
+		t.Errorf("Expected new IP to be empty when desired IP is empty, got '%s'", newIP)
+	}
+}
+
+func TestCompareIPsWithRouterState_NoCurrentRules(t *testing.T) {
+	// Test case: No current rules (new service)
+	desiredIP := "192.168.1.100"
+	var currentRules []*unifi.PortForward // No rules
+
+	ipChanged, oldIP, newIP := compareIPsWithRouterState(desiredIP, currentRules)
+
+	if ipChanged {
+		t.Errorf("Expected IP changed to be false for new service, got true")
+	}
+	if oldIP != "" {
+		t.Errorf("Expected old IP to be empty for new service, got '%s'", oldIP)
+	}
+	if newIP != "" {
+		t.Errorf("Expected new IP to be empty for new service, got '%s'", newIP)
+	}
+}
+
+func TestCompareIPsWithRouterState_MultipleRulesSomeMatch(t *testing.T) {
+	// Test case: Multiple rules, some match, some don't
+	desiredIP := "192.168.1.100"
+	currentRules := []*unifi.PortForward{
+		{
+			DstPort: "80",
+			Fwd:     "192.168.1.100", // Match
+			Name:    "default/test-service:http",
+		},
+		{
+			DstPort: "443",
+			Fwd:     "192.168.1.50", // Different IP - should trigger change
+			Name:    "default/test-service:https",
+		},
+	}
+
+	ipChanged, oldIP, newIP := compareIPsWithRouterState(desiredIP, currentRules)
+
+	if !ipChanged {
+		t.Errorf("Expected IP changed to be true when any rule has different IP, got false")
+	}
+	if oldIP != "192.168.1.50" {
+		t.Errorf("Expected old IP to be '192.168.1.50' (first mismatched rule), got '%s'", oldIP)
+	}
+	if newIP != "192.168.1.100" {
+		t.Errorf("Expected new IP to be '192.168.1.100', got '%s'", newIP)
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"unifi-port-forwarder/pkg/helpers"
 	"unifi-port-forwarder/pkg/routers"
 
+	"github.com/filipowm/go-unifi/unifi"
 	corev1 "k8s.io/api/core/v1"
 )
 
@@ -275,4 +276,47 @@ func ExtractChangeContextForTest(contextJSON, fallbackNamespace, fallbackName st
 	}
 
 	return &context, nil
+}
+
+// compareIPsWithRouterState compares desired IP against actual router state to detect real IP changes
+// This prevents false positives when service status is empty or inconsistent
+func compareIPsWithRouterState(desiredIP string, currentRules []*unifi.PortForward) (ipChanged bool, oldIP, newIP string) {
+	// If desired IP is empty, we can't determine if there's a real change
+	if desiredIP == "" {
+		return false, "", ""
+	}
+
+	// If no current rules exist, this is a new service (no IP change to detect)
+	if len(currentRules) == 0 {
+		return false, "", ""
+	}
+
+	// Check if any existing rule has a different IP than desired
+	for _, rule := range currentRules {
+		if rule.Fwd != desiredIP {
+			// Real IP change detected - router has different IP than desired
+			return true, rule.Fwd, desiredIP
+		}
+	}
+
+	// All existing rules have the correct IP - no change needed
+	return false, "", ""
+}
+
+// logServiceVsRouterStateDifferences logs when service status differs from router state
+// This helps debug issues where service LoadBalancer IP is empty/inconsistent but router has correct IP
+func logServiceVsRouterStateDifferences(serviceIP string, currentRules []*unifi.PortForward, serviceName, serviceNamespace string) {
+	if len(currentRules) == 0 {
+		return // No rules to compare against
+	}
+
+	// Get the IP from the first router rule for comparison
+	routerIP := currentRules[0].Fwd
+
+	// Check for differences between service status and router state
+	if serviceIP != routerIP {
+		// This indicates a potential issue where service status is not synced with router state
+		fmt.Printf("SERVICE_vs_ROUTER_IP_MISMATCH: service=%s/%s, service_ip=%s, router_ip=%s\n",
+			serviceNamespace, serviceName, serviceIP, routerIP)
+	}
 }
