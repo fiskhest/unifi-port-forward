@@ -54,7 +54,7 @@ type PortForwardReconciler struct {
 
 // Reconcile implements the reconciliation logic for Service resources
 func (r *PortForwardReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	logger := ctrllog.FromContext(ctx).WithValues("namespace", req.Namespace, "name", req.Name)
+	logger := ctrllog.FromContext(ctx)
 	serviceKey := fmt.Sprintf("%s/%s", req.Namespace, req.Name)
 
 	if r.isRecentlyCleaned(serviceKey) {
@@ -281,10 +281,7 @@ func (r *PortForwardReconciler) shouldProcessService(ctx context.Context, servic
 
 // processAllChanges handles the unified processing of all service changes
 func (r *PortForwardReconciler) processAllChanges(ctx context.Context, service *corev1.Service, changeContext *ChangeContext, currentRules []*unifi.PortForward) ([]PortOperation, ctrl.Result, error) {
-	logger := ctrllog.FromContext(ctx).WithValues(
-		"namespace", service.Namespace,
-		"name", service.Name,
-	)
+	logger := ctrllog.FromContext(ctx)
 	// Step 1: Determine desired end state
 	desiredConfigs, err := r.calculateDesiredState(service)
 	if err != nil {
@@ -362,7 +359,7 @@ func (r *PortForwardReconciler) processAllChanges(ctx context.Context, service *
 // handleFinalizerCleanup performs cleanup when service is being deleted with finalizer
 // Simplified pattern - cleanup first, then always remove finalizer (never hangs)
 func (r *PortForwardReconciler) handleFinalizerCleanup(ctx context.Context, service *corev1.Service) (ctrl.Result, error) {
-	logger := ctrllog.FromContext(ctx).WithValues("namespace", service.Namespace, "name", service.Name)
+	logger := ctrllog.FromContext(ctx)
 	serviceKey := fmt.Sprintf("%s/%s", service.Namespace, service.Name)
 
 	cleanupCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
@@ -390,7 +387,7 @@ func (r *PortForwardReconciler) handleFinalizerCleanup(ctx context.Context, serv
 
 // finalizeService handles cleanup logic when a service with our finalizer is deleted
 func (r *PortForwardReconciler) finalizeService(ctx context.Context, service *corev1.Service) error {
-	logger := ctrllog.FromContext(ctx).WithValues("namespace", service.Namespace, "name", service.Name)
+	logger := ctrllog.FromContext(ctx)
 
 	// Get current port forward rules with timeout protection
 	currentRules, err := r.Router.ListAllPortForwards(ctx)
@@ -673,20 +670,20 @@ func (r *PortForwardReconciler) shouldAttemptCleanupForMissingService(namespaced
 	usedPorts := helpers.GetUsedExternalPorts()
 	for port, svc := range usedPorts {
 		if svc == serviceKey {
-			logger.Info("🔍 DECISION: Cleanup needed - service has marked ports",
+			logger.Info("DECISION: Cleanup needed - service has marked ports",
 				"port", port)
 			return true
 		}
 	}
 
-	logger.Info("🔍 DECISION: No cleanup needed - no tracked state found")
+	logger.Info("DECISION: No cleanup needed - no tracked state found")
 	return false
 }
 
 // handleMissingServiceCleanup handles cleanup when service object is already deleted from Kubernetes
 // This is the critical race condition recovery path
 func (r *PortForwardReconciler) handleMissingServiceCleanup(ctx context.Context, namespacedName client.ObjectKey) (ctrl.Result, error) {
-	logger := ctrllog.FromContext(ctx).WithValues("namespace", namespacedName.Namespace, "name", namespacedName.Name)
+	logger := ctrllog.FromContext(ctx)
 	// Get current router rules and delete any that match this service
 	currentRules, err := r.Router.ListAllPortForwards(ctx)
 	if err != nil {

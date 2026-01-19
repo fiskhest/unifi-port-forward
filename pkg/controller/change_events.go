@@ -52,7 +52,7 @@ func NewEventPublisher(client client.Client, recorder record.EventRecorder, sche
 }
 
 func (ep *EventPublisher) PublishPortForwardCreatedEvent(ctx context.Context, service *corev1.Service, portMapping, externalIP, internalIP string, externalPort int, protocol, reason string) {
-	logger := ctrllog.FromContext(ctx).WithValues("service", service.Name, "namespace", service.Namespace)
+	logger := ctrllog.FromContext(ctx)
 
 	eventData := &PortForwardEventData{
 		ServiceKey:       fmt.Sprintf("%s/%s", service.Namespace, service.Name),
@@ -78,7 +78,7 @@ func (ep *EventPublisher) PublishPortForwardCreatedEvent(ctx context.Context, se
 }
 
 func (ep *EventPublisher) PublishPortForwardUpdatedEvent(ctx context.Context, service *corev1.Service, portMapping, externalIP, internalIP string, externalPort int, protocol, reason string) {
-	logger := ctrllog.FromContext(ctx).WithValues("service", service.Name, "namespace", service.Namespace)
+	logger := ctrllog.FromContext(ctx)
 
 	eventData := &PortForwardEventData{
 		ServiceKey:       fmt.Sprintf("%s/%s", service.Namespace, service.Name),
@@ -104,7 +104,7 @@ func (ep *EventPublisher) PublishPortForwardUpdatedEvent(ctx context.Context, se
 }
 
 func (ep *EventPublisher) PublishPortForwardDeletedEvent(ctx context.Context, service *corev1.Service, portMapping string, externalPort int, protocol, reason string) {
-	logger := ctrllog.FromContext(ctx).WithValues("service", service.Name, "namespace", service.Namespace)
+	logger := ctrllog.FromContext(ctx)
 
 	eventData := &PortForwardEventData{
 		ServiceKey:       fmt.Sprintf("%s/%s", service.Namespace, service.Name),
@@ -128,7 +128,7 @@ func (ep *EventPublisher) PublishPortForwardDeletedEvent(ctx context.Context, se
 }
 
 func (ep *EventPublisher) PublishPortForwardFailedEvent(ctx context.Context, service *corev1.Service, portMapping, externalIP, internalIP string, externalPort int, protocol, reason string, err error) {
-	logger := ctrllog.FromContext(ctx).WithValues("service", service.Name, "namespace", service.Namespace)
+	logger := ctrllog.FromContext(ctx)
 
 	errorMsg := ""
 	if err != nil {
@@ -194,7 +194,7 @@ func (ep *EventPublisher) createEvent(ctx context.Context, service *corev1.Servi
 }
 
 func (ep *EventPublisher) PublishPortForwardTakenOwnershipEvent(ctx context.Context, service *corev1.Service, oldRuleName, newRuleName string, externalPort int, protocol string) {
-	logger := ctrllog.FromContext(ctx).WithValues("service", service.Name, "namespace", service.Namespace)
+	logger := ctrllog.FromContext(ctx)
 
 	eventData := &PortForwardEventData{
 		ServiceKey:       fmt.Sprintf("%s/%s", service.Namespace, service.Name),
@@ -220,7 +220,7 @@ func (ep *EventPublisher) PublishPortForwardTakenOwnershipEvent(ctx context.Cont
 
 // PublishDriftDetectedEvent publishes an event when drift is detected for a service
 func (ep *EventPublisher) PublishDriftDetectedEvent(ctx context.Context, service *corev1.Service, analysis *DriftAnalysis) {
-	logger := ctrllog.FromContext(ctx).WithValues("service", service.Name, "namespace", service.Namespace)
+	logger := ctrllog.FromContext(ctx)
 
 	eventData := &PortForwardEventData{
 		ServiceKey:       fmt.Sprintf("%s/%s", service.Namespace, service.Name),
@@ -240,7 +240,7 @@ func (ep *EventPublisher) PublishDriftDetectedEvent(ctx context.Context, service
 
 // PublishDriftCorrectedEvent publishes an event when drift is successfully corrected for a service
 func (ep *EventPublisher) PublishDriftCorrectedEvent(ctx context.Context, service *corev1.Service, analysis *DriftAnalysis) {
-	logger := ctrllog.FromContext(ctx).WithValues("service", service.Name, "namespace", service.Namespace)
+	logger := ctrllog.FromContext(ctx)
 
 	eventData := &PortForwardEventData{
 		ServiceKey:       fmt.Sprintf("%s/%s", service.Namespace, service.Name),
@@ -260,7 +260,7 @@ func (ep *EventPublisher) PublishDriftCorrectedEvent(ctx context.Context, servic
 
 // PublishDriftCorrectionFailedEvent publishes an event when drift correction fails for a service
 func (ep *EventPublisher) PublishDriftCorrectionFailedEvent(ctx context.Context, service *corev1.Service, analysis *DriftAnalysis, err error) {
-	logger := ctrllog.FromContext(ctx).WithValues("service", service.Name, "namespace", service.Namespace)
+	logger := ctrllog.FromContext(ctx)
 
 	eventData := &PortForwardEventData{
 		ServiceKey:       fmt.Sprintf("%s/%s", service.Namespace, service.Name),
@@ -283,7 +283,7 @@ func (ep *EventPublisher) PublishDriftCorrectionFailedEvent(ctx context.Context,
 // PublishServicePeriodicReconciliationCompletedEvent publishes an event when periodic reconciliation completes
 // for a specific service that had drift. This is only called when drift was detected and handled.
 func (ep *EventPublisher) PublishServicePeriodicReconciliationCompletedEvent(ctx context.Context, service *corev1.Service, hasDrift bool, correctedRules int, failedOperations int) {
-	logger := ctrllog.FromContext(ctx).WithValues("service", service.Name, "namespace", service.Namespace)
+	logger := ctrllog.FromContext(ctx)
 
 	eventData := &PortForwardEventData{
 		ServiceKey:       fmt.Sprintf("%s/%s", service.Namespace, service.Name),
