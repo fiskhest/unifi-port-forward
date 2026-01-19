@@ -49,10 +49,9 @@ func (ServiceChangePredicate) Update(e event.UpdateEvent) bool {
 		"new_finalizers", newSvc.Finalizers,
 	)
 
-	// Only process if service has both our finalizer AND port forwarding annotation
-	if (!oldHasFinalizer && !newHasFinalizer) || (!oldHasAnnotation && !newHasAnnotation) {
-		logger.V(1).Info("Update event filtered: service lacks finalizer and/or annotation",
-			"old_has_finalizer", oldHasFinalizer, "new_has_finalizer", newHasFinalizer,
+	// Only process if service has port forwarding annotation (old or new)
+	if !oldHasAnnotation && !newHasAnnotation {
+		logger.V(1).Info("Update event filtered: service lacks port forwarding annotation",
 			"old_has_annotation", oldHasAnnotation, "new_has_annotation", newHasAnnotation)
 		return false
 	}
@@ -105,35 +104,43 @@ func (ServiceChangePredicate) Delete(e event.DeleteEvent) bool {
 	hasFinalizer := controllerutil.ContainsFinalizer(svc, config.FinalizerLabel)
 	hasAnnotation := hasPortForwardAnnotation(svc)
 
+	// Extract service key for logging and potential duplicate detection
+	serviceKey := fmt.Sprintf("%s/%s", svc.Namespace, svc.Name)
+
 	logger := ctrllog.Log.WithName("predicate-delete").WithValues(
 		"namespace", svc.Namespace,
 		"name", svc.Name,
+		"service_key", serviceKey,
 		"has_finalizer", hasFinalizer,
 		"has_annotation", hasAnnotation,
 		"deletion_timestamp", svc.DeletionTimestamp,
 		"finalizers", svc.Finalizers,
+		"resource_version", svc.ResourceVersion,
+		"uid", svc.UID,
 	)
 
-	// PRIMARY PATH: Service currently has our finalizer - highest priority
+	// PRIMARY PATH: Service currently has our finalizer - normal deletion
 	if hasFinalizer {
-		logger.Info("Deleting service with managed finalizer",
-			"namespace", svc.Namespace,
-			"name", svc.Name,
-			"deletion_timestamp", svc.DeletionTimestamp)
+		logger.Info("DELETE event: Service has finalizer - normal deletion path",
+			"event_type", "normal_deletion")
 		return true
 	}
 
-	// SECONDARY PATH: Service ever had port forwarding annotation - orphaned cleanup
-	// AI: "This catches services that lost finalizer during deletion race conditions"
-	// TODO: I'm not sure this should be here? Or will this return true and delete a Port Forward if we have a "valid and deployed annotation" but no finalizer?
+	// SECONDARY PATH: Service has annotation but no finalizer
+	// This could be: 1) trailing event after cleanup, 2) orphaned service
 	if hasAnnotation {
-		logger.Info("Deleting service with unmanaged port forward",
-			"namespace", svc.Namespace,
-			"name", svc.Name,
-			"deletion_timestamp", svc.DeletionTimestamp)
+		logger.Info("DELETE event: Service has annotation but no finalizer - potential trailing event",
+			"event_type", "trailing_orphaned")
+
+		// NOTE: We can't access reconciler state from predicate
+		// So we return true and let reconcile handle the decision
+		// The reconciler will check recent cleanups and decide appropriately
 		return true
 	}
 
+	// THIRD PATH: Service has neither finalizer nor annotation - ignore
+	logger.V(1).Info("DELETE event: Service has no finalizer or annotation - ignoring",
+		"event_type", "ignore")
 	return false
 }
 

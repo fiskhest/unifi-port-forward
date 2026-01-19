@@ -84,6 +84,26 @@ func UnmarkPortsForService(serviceKey string) {
 	}
 }
 
+// GetUsedExternalPorts returns a copy of the used external ports map
+// Exported for controller to read port conflict tracking state
+func GetUsedExternalPorts() map[int]string {
+	portMutex.RLock()
+	defer portMutex.RUnlock()
+
+	// Return a copy to prevent race conditions
+	copy := make(map[int]string)
+	for k, v := range usedExternalPorts {
+		copy[k] = v
+	}
+	return copy
+}
+
+// GetPortMutex returns the port mutex for external coordination
+// Exported for controller to safely access port tracking state
+func GetPortMutex() *sync.RWMutex {
+	return &portMutex
+}
+
 // GetLBIP extracts the LoadBalancer IP from a service
 func GetLBIP(service *v1.Service) string {
 	if len(service.Status.LoadBalancer.Ingress) > 0 {

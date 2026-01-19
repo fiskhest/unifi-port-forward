@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"unifi-port-forwarder/pkg/config"
@@ -42,6 +43,11 @@ type PortForwardReconciler struct {
 
 	// Always-on periodic reconciler
 	PeriodicReconciler *PeriodicReconciler
+
+	// Duplicate event detection
+	recentCleanups map[string]time.Time // serviceKey -> cleanup timestamp
+	cleanupMutex   sync.RWMutex         // protects recentCleanups
+	cleanupWindow  time.Duration        // how long to consider a cleanup "recent"
 }
 
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
@@ -49,6 +55,14 @@ type PortForwardReconciler struct {
 // Reconcile implements the reconciliation logic for Service resources
 func (r *PortForwardReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := ctrllog.FromContext(ctx).WithValues("namespace", req.Namespace, "name", req.Name)
+	serviceKey := fmt.Sprintf("%s/%s", req.Namespace, req.Name)
+
+	if r.isRecentlyCleaned(serviceKey) {
+		logger.V(1).Info("Skipping duplicate reconcile",
+			"service_key", serviceKey,
+			"cleanup_window", r.cleanupWindow)
+		return ctrl.Result{}, nil
+	}
 
 	service := &corev1.Service{}
 	if err := r.Get(ctx, req.NamespacedName, service); err != nil {
@@ -145,7 +159,6 @@ func (r *PortForwardReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	}
 
 	// Create change context for this reconciliation using fresh router state
-	serviceKey := fmt.Sprintf("%s/%s", service.Namespace, service.Name)
 	changeContext := r.detectChanges(ctx, service, serviceKey, allCurrentRules)
 
 	// Filter rules for this specific service for logging
@@ -314,6 +327,7 @@ func (r *PortForwardReconciler) processAllChanges(ctx context.Context, service *
 // Simplified pattern - cleanup first, then always remove finalizer (never hangs)
 func (r *PortForwardReconciler) handleFinalizerCleanup(ctx context.Context, service *corev1.Service) (ctrl.Result, error) {
 	logger := ctrllog.FromContext(ctx).WithValues("namespace", service.Namespace, "name", service.Name)
+	serviceKey := fmt.Sprintf("%s/%s", service.Namespace, service.Name)
 
 	cleanupCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -323,6 +337,9 @@ func (r *PortForwardReconciler) handleFinalizerCleanup(ctx context.Context, serv
 		logger.Error(err, "CLEANUP FAILED, but removing finalizer anyway")
 	} else {
 		logger.Info("CLEANUP SUCCEEDED")
+
+		// Mark service as recently cleaned up to prevent duplicate processing
+		r.markServiceCleanup(serviceKey)
 	}
 
 	// Always remove finalizer - never blocked by cleanup failures
@@ -601,16 +618,35 @@ func (r *PortForwardReconciler) parseIntField(field string) int {
 // shouldAttemptCleanupForMissingService determines if we should attempt cleanup for a missing service
 // Uses a simple heuristic: always attempt cleanup for services that could be ours
 func (r *PortForwardReconciler) shouldAttemptCleanupForMissingService(namespacedName client.ObjectKey) bool {
-	logger := ctrllog.FromContext(context.Background()).WithValues(
-		"namespace", namespacedName.Namespace,
-		"name", namespacedName.Name)
+	serviceKey := namespacedName.String()
+	logger := ctrllog.FromContext(context.Background()).WithValues("service_key", serviceKey)
 
-	logger.Info("🔍 DECISION: Always attempting cleanup for missing service",
-		"service_key", namespacedName.String())
+	// Check if recently cleaned up (new logic)
+	if r.isRecentlyCleaned(serviceKey) {
+		logger.Info("DECISION: No cleanup needed - service recently cleaned up",
+			"cleanup_age_seconds", time.Since(r.recentCleanups[serviceKey]).Seconds())
+		return false
+	}
 
-	// For now, always attempt cleanup for missing services to prevent race conditions
-	// This is safer than potentially missing cleanup due to race conditions
-	return true
+	// Primary check: internal service rule map
+	if rules, exists := r.serviceRuleMap[serviceKey]; exists && len(rules) > 0 {
+		logger.Info("DECISION: Cleanup needed - service has rules in internal map",
+			"rule_count", len(rules))
+		return true
+	}
+
+	// Secondary check: port conflict tracking
+	usedPorts := helpers.GetUsedExternalPorts()
+	for port, svc := range usedPorts {
+		if svc == serviceKey {
+			logger.Info("🔍 DECISION: Cleanup needed - service has marked ports",
+				"port", port)
+			return true
+		}
+	}
+
+	logger.Info("🔍 DECISION: No cleanup needed - no tracked state found")
+	return false
 }
 
 // handleMissingServiceCleanup handles cleanup when service object is already deleted from Kubernetes
@@ -667,13 +703,50 @@ func (r *PortForwardReconciler) handleMissingServiceCleanup(ctx context.Context,
 		}
 	}
 
+	if removedCount > 0 {
+		// Mark service as recently cleaned up
+		r.markServiceCleanup(namespacedName.String())
+	}
+
 	logger.Info("missing service cleanup completed",
 		"service_key", namespacedName.String(),
 		"total_rules", len(currentRules),
-		"rules_removed", removedCount)
+		"rules_removed", removedCount,
+		"cleanup_needed", removedCount > 0)
 
 	// Return success - service is already deleted, no need to requeue
 	return ctrl.Result{}, nil
+}
+
+// markServiceCleanup records that a service was recently cleaned up
+func (r *PortForwardReconciler) markServiceCleanup(serviceKey string) {
+	r.cleanupMutex.Lock()
+	defer r.cleanupMutex.Unlock()
+	r.recentCleanups[serviceKey] = time.Now()
+
+	// Clean up old entries periodically
+	r.cleanupOldEntries()
+}
+
+// isRecentlyCleaned checks if service was cleaned up within cleanup window
+func (r *PortForwardReconciler) isRecentlyCleaned(serviceKey string) bool {
+	r.cleanupMutex.RLock()
+	defer r.cleanupMutex.RUnlock()
+
+	if cleanupTime, exists := r.recentCleanups[serviceKey]; exists {
+		return time.Since(cleanupTime) < r.cleanupWindow
+	}
+	return false
+}
+
+// cleanupOldEntries removes cleanup entries older than window
+func (r *PortForwardReconciler) cleanupOldEntries() {
+	cutoff := time.Now().Add(-r.cleanupWindow)
+	for serviceKey, cleanupTime := range r.recentCleanups {
+		if cleanupTime.Before(cutoff) {
+			delete(r.recentCleanups, serviceKey)
+		}
+	}
 }
 
 // SetupWithManager sets up the controller with a manager
@@ -687,6 +760,10 @@ func (r *PortForwardReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 	// 🆕 Initialize event publisher
 	r.EventPublisher = NewEventPublisher(r.Client, r.Recorder, r.Scheme)
+
+	// Initialize duplicate event detection
+	r.recentCleanups = make(map[string]time.Time)
+	r.cleanupWindow = 30 * time.Second
 
 	// Use enhanced predicate for unified change detection
 	eventFilter := ServiceChangePredicate{}

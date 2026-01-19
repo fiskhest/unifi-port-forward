@@ -66,6 +66,10 @@ func NewControllerTestEnv(t *testing.T) *ControllerTestEnv {
 	controller.serviceRuleMap = make(map[string][]*unifi.PortForward)
 	controller.mapVersion = 0
 
+	// Initialize duplicate event detection
+	controller.recentCleanups = make(map[string]time.Time)
+	controller.cleanupWindow = 30 * time.Second
+
 	return &ControllerTestEnv{
 		MockRouter: mockRouter,
 		Controller: controller,
