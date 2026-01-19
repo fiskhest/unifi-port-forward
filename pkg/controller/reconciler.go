@@ -118,12 +118,48 @@ func (r *PortForwardReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 
 	// Add finalizer if service needs management and doesn't have it
 	if shouldManage && !controllerutil.ContainsFinalizer(service, config.FinalizerLabel) {
-		logger.Info("Adding finalizer to managed service", "has_finalizer", false, "should_manage", shouldManage, "ip", lbIP)
-		controllerutil.AddFinalizer(service, config.FinalizerLabel)
-		if err := r.Update(ctx, service); err != nil {
-			logger.Error(err, "Failed to add finalizer")
+		logger.V(1).Info("Adding finalizer to managed service", "has_finalizer", false, "should_manage", shouldManage, "ip", lbIP)
+
+		// Manual retry on conflict to handle concurrent reconciles
+		maxRetries := 3
+		retryDelay := time.Millisecond * 10
+
+		for attempt := 0; attempt < maxRetries; attempt++ {
+			if attempt > 0 {
+				// Re-fetch service to get latest state
+				if err := r.Get(ctx, req.NamespacedName, service); err != nil {
+					logger.Error(err, "Failed to re-fetch service during retry")
+					return ctrl.Result{}, err
+				}
+
+				// Check if finalizer was added by another reconcile
+				if controllerutil.ContainsFinalizer(service, config.FinalizerLabel) {
+					logger.V(1).Info("Finalizer already added by another reconcile")
+					break
+				}
+
+				logger.V(1).Info("Retrying finalizer addition", "attempt", attempt+1)
+				time.Sleep(retryDelay * time.Duration(attempt))
+			}
+
+			controllerutil.AddFinalizer(service, config.FinalizerLabel)
+			if err := r.Update(ctx, service); err != nil {
+				if errors.IsConflict(err) && attempt < maxRetries-1 {
+					logger.V(1).Info("Conflict during finalizer addition, will retry", "attempt", attempt+1)
+					continue
+				}
+				logger.Error(err, "Failed to add finalizer")
+				return ctrl.Result{}, err
+			}
+			break // Success
+		}
+
+		// Re-fetch service to get latest state after finalizer addition
+		if err := r.Get(ctx, req.NamespacedName, service); err != nil {
+			logger.Error(err, "Failed to re-fetch service after finalizer addition")
 			return ctrl.Result{}, err
 		}
+
 		return ctrl.Result{Requeue: true}, nil // Requeue to continue processing
 	}
 
@@ -185,7 +221,7 @@ func (r *PortForwardReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	}
 
 	if changeContext.HasRelevantChanges() {
-		logger.Info("Processing service changes",
+		logger.V(1).Info("Processing service changes",
 			"has_relevant", changeContext.HasRelevantChanges(),
 			"ip_changed", changeContext.IPChanged,
 			"annotation_changed", changeContext.AnnotationChanged,
@@ -336,8 +372,6 @@ func (r *PortForwardReconciler) handleFinalizerCleanup(ctx context.Context, serv
 		// TODO: err no?
 		logger.Error(err, "CLEANUP FAILED, but removing finalizer anyway")
 	} else {
-		logger.Info("CLEANUP SUCCEEDED")
-
 		// Mark service as recently cleaned up to prevent duplicate processing
 		r.markServiceCleanup(serviceKey)
 	}

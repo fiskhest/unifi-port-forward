@@ -121,7 +121,7 @@ func (ServiceChangePredicate) Delete(e event.DeleteEvent) bool {
 
 	// PRIMARY PATH: Service currently has our finalizer - normal deletion
 	if hasFinalizer {
-		logger.Info("DELETE event: Service has finalizer - normal deletion path",
+		logger.V(1).Info("Service has finalizer - normal deletion path",
 			"event_type", "normal_deletion")
 		return true
 	}
@@ -129,7 +129,7 @@ func (ServiceChangePredicate) Delete(e event.DeleteEvent) bool {
 	// SECONDARY PATH: Service has annotation but no finalizer
 	// This could be: 1) trailing event after cleanup, 2) orphaned service
 	if hasAnnotation {
-		logger.Info("DELETE event: Service has annotation but no finalizer - potential trailing event",
+		logger.Info("Service has annotation but no finalizer - potential trailing event",
 			"event_type", "trailing_orphaned")
 
 		// NOTE: We can't access reconciler state from predicate
@@ -138,9 +138,6 @@ func (ServiceChangePredicate) Delete(e event.DeleteEvent) bool {
 		return true
 	}
 
-	// THIRD PATH: Service has neither finalizer nor annotation - ignore
-	logger.V(1).Info("DELETE event: Service has no finalizer or annotation - ignoring",
-		"event_type", "ignore")
 	return false
 }
 
