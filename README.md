@@ -1,6 +1,6 @@
 # unifi-port-forwarder
 
-Rumour has that the Unifi Cloud Gateway Max finally supports BGP.
+Rumour says that the Unifi Cloud Gateway Max finally supports BGP.
 A wiser man than I once quipped that automating ones router would be a fools errand. I wholeheartedly agree, but it does not change the fact that I also am a fool. And proud inventor of footguns everywhere.
 
 Kubernetes controllers are fun. This controller will look for any `LoadBalancer` objects annotated with `unifi-port-forwarder/ports`. On first startup, it will check all services and then inspect the currently provisioned Port Forward rules on the Unifi router, either updating or ensuring that port forward rules match with the service object spec and annotation rule. Thereafter, it will periodically reconcile on a schedule ensuring router port forward rules weren't brought out of sync by some other means.
@@ -9,16 +9,14 @@ The controller does not delete other rules (as long as they don't use conflictin
 
 ## Core Features
 - Real-time monitoring of kubernetes LoadBalancer services, automatically configuring corresponding port forward rules on a UniFi router.
-- Configurable with environment variables
-- Pre-created rules not maintained by this controller **stays untouched** (as long as there are no conflicts)
-- Services without annotation are **completely skipped**
+- Pre-created rules not maintained by this controller **stays untouched** (as long as there are no conflicts). Only manages services with valid annotations.
 - Support for multiple rules per service
-- Publishes events on changes to each service object
-- Periodic reconciliation for drift detection of remote rules
-- Event data included in Kubernetes events for debugging and observability
+- Periodic reconciliation for state drift detection
+- Publishes kubernetes events for improved observability
+- Can create port forwards using CRDs for services that are managed outside of kubernetes
+- Configurable with environment variables
 - Detailed error handling and logging on the controller pod
 - Graceful service deletion with finalizer-based cleanup
-
 
 ## Supported Routers
 
@@ -82,7 +80,6 @@ Forking is welcome.
 5. Submit a pull request
 
 Potential use cases that might be added in the future:
-- CRDs to define external to cluster port forward rules with IaC
 - add a configurable "policy" = sync / upsert-only / create-only?
 - Support for Service NodePort Objects / no load balancer implemented
 
