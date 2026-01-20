@@ -362,19 +362,22 @@ func TestReconcile_FailedCleanup_ServiceDeletion(t *testing.T) {
 	env.MockRouter.SetSimulatedFailure("RemovePort", true)
 
 	// Reconcile deletion - should fail due to simulated failure
-	_, err = env.Controller.Reconcile(ctx, ctrl.Request{
+	firstResult, err := env.Controller.Reconcile(ctx, ctrl.Request{
 		NamespacedName: types.NamespacedName{
 			Name:      "cleanup-test",
 			Namespace: "default",
 		},
 	})
 
-	// Current implementation intentionally doesn't fail on cleanup errors to avoid blocking
-	// Cleanup failures are logged but reconciliation returns success
-	if err != nil {
-		t.Errorf("Unexpected error during service deletion: %v. Operation counts: %v", err, env.MockRouter.GetOperationCounts())
+	if err == nil {
+		t.Errorf("Expected error during missing service cleanup due to cleanup failure, but got success. Operation counts: %v", env.MockRouter.GetOperationCounts())
 	} else {
-		t.Logf("✅ Service deletion completed successfully (cleanup errors don't block reconciliation)")
+		t.Logf("✅ Missing service cleanup correctly failed due to cleanup failure")
+	}
+
+	// For missing services, no retry logic (no RequeueAfter expected since service is already deleted)
+	if firstResult.Requeue {
+		t.Errorf("Expected no Requeue for missing service cleanup, got result: %+v", firstResult)
 	}
 
 	// Verify RemovePort was attempted

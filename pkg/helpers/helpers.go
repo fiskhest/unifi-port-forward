@@ -218,6 +218,20 @@ func validatePortMappings(service *v1.Service, mappings []PortMapping) error {
 	return nil
 }
 
+// GetPortNameByNumber returns the port name for a given port number from service spec
+func GetPortNameByNumber(service *v1.Service, portNumber int) string {
+	for _, port := range service.Spec.Ports {
+		if int(port.Port) == portNumber {
+			if port.Name != "" {
+				return port.Name
+			}
+			// Fallback to port if no name is set
+			return string(port.Port)
+		}
+	}
+	return fmt.Sprintf("%d", portNumber)
+}
+
 // GetPortConfigs creates multiple PortConfigs from a service (supports multiple ports)
 func GetPortConfigs(service *v1.Service, lbIP string, annotationKey string) ([]routers.PortConfig, error) {
 	serviceKey := fmt.Sprintf("%s/%s", service.Namespace, service.Name)

@@ -32,7 +32,7 @@ type PeriodicReconciler struct {
 	eventPublisher *EventPublisher
 	recorder       record.EventRecorder
 
-	// Fixed interval - no configuration needed (15 minutes)
+	// Fixed interval - no configuration needed (15 minutes)  ### Fixed interval as specified TODO should be configurable from ENV
 	interval time.Duration
 
 	// Concurrency control
@@ -49,7 +49,7 @@ func NewPeriodicReconciler(client client.Client, scheme *runtime.Scheme, router 
 		Config:         config,
 		eventPublisher: eventPublisher,
 		recorder:       recorder,
-		interval:       15 * time.Minute, // Fixed interval as specified
+		interval:       15 * time.Minute, // Fixed interval as specified TODO should be configurable from ENV
 		stopCh:         make(chan struct{}),
 		semaphore:      make(chan struct{}, 3), // Max 3 concurrent reconciliations
 	}
@@ -60,11 +60,9 @@ func (r *PeriodicReconciler) Start(ctx context.Context) error {
 	logger := ctrllog.FromContext(ctx).WithValues("component", "periodic-reconciler")
 	logger.V(1).Info("Starting periodic reconciler", "interval", r.interval.String())
 
-	// Create ticker with fixed 15-minute interval
 	r.ticker = time.NewTicker(r.interval)
 	defer r.ticker.Stop()
 
-	// Perform initial reconciliation immediately on startup
 	if err := r.performInitialReconciliation(ctx); err != nil {
 		logger.Error(err, "Initial reconciliation failed")
 	}
@@ -89,10 +87,8 @@ func (r *PeriodicReconciler) Start(ctx context.Context) error {
 func (r *PeriodicReconciler) Stop() error {
 	logger := ctrllog.FromContext(context.Background()).WithValues("component", "periodic-reconciler")
 
-	// Signal stop
 	close(r.stopCh)
 
-	// Stop ticker
 	if r.ticker != nil {
 		r.ticker.Stop()
 	}
@@ -106,9 +102,6 @@ func (r *PeriodicReconciler) Stop() error {
 
 // performInitialReconciliation performs the first reconciliation when the controller starts
 func (r *PeriodicReconciler) performInitialReconciliation(ctx context.Context) error {
-	// logger := ctrllog.FromContext(ctx).WithValues("component", "periodic-reconciler")
-	// logger.Info("Performing initial reconciliation on startup")
-
 	startTime := time.Now()
 	return r.performFullReconciliation(ctx, startTime)
 }
@@ -124,34 +117,26 @@ func (r *PeriodicReconciler) performPeriodicReconciliation(ctx context.Context) 
 func (r *PeriodicReconciler) performFullReconciliation(ctx context.Context, startTime time.Time) error {
 	logger := ctrllog.FromContext(ctx).WithValues("component", "periodic-reconciler")
 
-	// 1. Get ALL current router rules
-	logger.V(1).Info("Fetching current router port forwarding rules")
 	allRouterRules, err := r.Router.ListAllPortForwards(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to list router rules: %w", err)
 	}
 	logger.V(1).Info("Retrieved router rules", "count", len(allRouterRules))
 
-	// 2. Get ALL managed services
-	logger.V(1).Info("Fetching managed services from Kubernetes")
 	managedServices, err := r.getAllManagedServices(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get managed services: %w", err)
 	}
 	logger.V(1).Info("Retrieved managed services", "count", len(managedServices))
 
-	// 3. Analyze drift for all services
-	logger.V(1).Info("Analyzing drift for all services")
 	driftDetector := &DriftDetector{Client: r.Client, Router: r.Router}
 	driftAnalyses, err := driftDetector.AnalyzeAllServicesDrift(ctx, managedServices, allRouterRules)
 	if err != nil {
 		return fmt.Errorf("failed to analyze drift: %w", err)
 	}
 
-	// Add single start log entry
 	logger.V(1).Info("Starting periodic reconciliation cycle", "total_services", len(driftAnalyses))
 
-	// 4. Process each service with per-service event publishing only when drift exists
 	servicesWithDrift := 0
 	correctedRules := 0
 	failedOperations := 0
@@ -166,7 +151,6 @@ func (r *PeriodicReconciler) performFullReconciliation(ctx context.Context, star
 				"wrong_rules", len(analysis.WrongRules),
 				"extra_rules", len(analysis.ExtraRules))
 
-			// Publish drift detected event
 			if r.eventPublisher != nil {
 				r.eventPublisher.PublishDriftDetectedEvent(ctx, service, analysis)
 			}
@@ -175,7 +159,6 @@ func (r *PeriodicReconciler) performFullReconciliation(ctx context.Context, star
 				logger.Error(err, "Failed to correct drift for service", "service", analysis.ServiceName)
 				failedOperations++
 
-				// Publish failure event
 				if r.eventPublisher != nil {
 					r.eventPublisher.PublishDriftCorrectionFailedEvent(ctx, service, analysis, err)
 				}
@@ -187,9 +170,7 @@ func (r *PeriodicReconciler) performFullReconciliation(ctx context.Context, star
 			} else {
 				rulesCorrected := len(analysis.MissingRules) + len(analysis.WrongRules) + len(analysis.ExtraRules)
 				correctedRules += rulesCorrected
-				// Drift correction completed successfully
 
-				// Publish success event
 				if r.eventPublisher != nil {
 					r.eventPublisher.PublishDriftCorrectedEvent(ctx, service, analysis)
 				}
@@ -200,10 +181,8 @@ func (r *PeriodicReconciler) performFullReconciliation(ctx context.Context, star
 				}
 			}
 		}
-		// No events for services without drift
 	}
 
-	// Log summary with duration
 	duration := time.Since(startTime)
 	logger.Info("Periodic reconciliation completed",
 		"total_services", len(managedServices),
@@ -219,10 +198,8 @@ func (r *PeriodicReconciler) performFullReconciliation(ctx context.Context, star
 func (r *PeriodicReconciler) correctServiceDrift(ctx context.Context, analysis *DriftAnalysis) error {
 	_ = ctrllog.FromContext(ctx).WithValues("component", "periodic-reconciler", "service", analysis.ServiceName)
 
-	// Create operations for missing and wrong rules
 	var operations []PortOperation
 
-	// Add operations for missing rules
 	for _, missingRule := range analysis.MissingRules {
 		operations = append(operations, PortOperation{
 			Type:   OpCreate,
@@ -231,7 +208,6 @@ func (r *PeriodicReconciler) correctServiceDrift(ctx context.Context, analysis *
 		})
 	}
 
-	// Add operations for wrong rules (ownership or configuration issues)
 	for _, wrongRule := range analysis.WrongRules {
 		operations = append(operations, PortOperation{
 			Type:         OpUpdate,
@@ -241,7 +217,6 @@ func (r *PeriodicReconciler) correctServiceDrift(ctx context.Context, analysis *
 		})
 	}
 
-	// Add operations for extra rules (our rules that shouldn't exist)
 	for _, extraRule := range analysis.ExtraRules {
 		operations = append(operations, PortOperation{
 			Type: OpDelete,
@@ -260,15 +235,10 @@ func (r *PeriodicReconciler) correctServiceDrift(ctx context.Context, analysis *
 		})
 	}
 
-	// Execute drift correction operations
-
-	// Execute operations using existing operation execution logic
 	result, err := r.executeOperations(ctx, operations)
 	if err != nil {
 		return fmt.Errorf("failed to execute drift correction operations: %w", err)
 	}
-
-	// Drift correction completed successfully
 
 	if len(result.Failed) > 0 {
 		return fmt.Errorf("%d operations failed during drift correction", len(result.Failed))
@@ -331,7 +301,6 @@ func (r *PeriodicReconciler) getAllManagedServices(ctx context.Context) ([]*core
 
 // shouldManageService checks if a service should be managed by the periodic reconciler
 func (r *PeriodicReconciler) shouldManageService(service *corev1.Service) bool {
-	// Only manage services with the required annotation
 	annotations := service.GetAnnotations()
 	if annotations == nil {
 		return false
@@ -342,7 +311,6 @@ func (r *PeriodicReconciler) shouldManageService(service *corev1.Service) bool {
 		return false
 	}
 
-	// Only manage services with LoadBalancer IP
 	lbIP := helpers.GetLBIP(service)
 	return lbIP != ""
 }

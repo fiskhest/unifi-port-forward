@@ -51,7 +51,7 @@ func NewEventPublisher(client client.Client, recorder record.EventRecorder, sche
 	}
 }
 
-func (ep *EventPublisher) PublishPortForwardCreatedEvent(ctx context.Context, service *corev1.Service, portMapping, externalIP, internalIP string, externalPort int, protocol, reason string) {
+func (ep *EventPublisher) PublishPortForwardCreatedEvent(ctx context.Context, service *corev1.Service, portName, portMapping, externalIP, internalIP string, internalPort, externalPort int, protocol, reason string) {
 	logger := ctrllog.FromContext(ctx)
 
 	eventData := &PortForwardEventData{
@@ -64,10 +64,10 @@ func (ep *EventPublisher) PublishPortForwardCreatedEvent(ctx context.Context, se
 		ExternalPort:     externalPort,
 		Protocol:         protocol,
 		Reason:           reason,
-		Message:          fmt.Sprintf("%s -> %s:%d (%s)", portMapping, internalIP, externalPort, protocol),
+		Message:          fmt.Sprintf("%s(%s) -> %s:%d", portName, protocol, internalIP, externalPort),
 	}
 
-	message := fmt.Sprintf("Created port forward rule: %s service: %s", eventData.Message, service.Name)
+	message := fmt.Sprintf("Created port forward rule '%s/%s:%s': %d(%s) -> %s:%d", service.Namespace, service.Name, portName, externalPort, protocol, internalIP, internalPort)
 
 	if err := ep.createEvent(ctx, service, EventPortForwardCreated, message, eventData); err != nil {
 		logger.Error(err, "Failed to publish PortForwardCreated event")
@@ -77,7 +77,7 @@ func (ep *EventPublisher) PublishPortForwardCreatedEvent(ctx context.Context, se
 	logger.V(1).Info("Published PortForwardCreated event", "port_mapping", portMapping, "external_port", externalPort)
 }
 
-func (ep *EventPublisher) PublishPortForwardUpdatedEvent(ctx context.Context, service *corev1.Service, portMapping, externalIP, internalIP string, externalPort int, protocol, reason string) {
+func (ep *EventPublisher) PublishPortForwardUpdatedEvent(ctx context.Context, service *corev1.Service, portName, portMapping, externalIP, internalIP string, externalPort int, protocol, reason string) {
 	logger := ctrllog.FromContext(ctx)
 
 	eventData := &PortForwardEventData{
@@ -93,7 +93,7 @@ func (ep *EventPublisher) PublishPortForwardUpdatedEvent(ctx context.Context, se
 		Message:          fmt.Sprintf("%s -> %s:%d (%s)", portMapping, internalIP, externalPort, protocol),
 	}
 
-	message := fmt.Sprintf("Updated port forward rule: %s service: %s", eventData.Message, service.Name)
+	message := fmt.Sprintf("Updated port forward rule '%s/%s:%s'", service.Namespace, service.Name, portName)
 
 	if err := ep.createEvent(ctx, service, EventPortForwardUpdated, message, eventData); err != nil {
 		logger.Error(err, "Failed to publish PortForwardUpdated event")
@@ -103,7 +103,7 @@ func (ep *EventPublisher) PublishPortForwardUpdatedEvent(ctx context.Context, se
 	logger.V(1).Info("Published PortForwardUpdated event", "port_mapping", portMapping, "external_port", externalPort)
 }
 
-func (ep *EventPublisher) PublishPortForwardDeletedEvent(ctx context.Context, service *corev1.Service, portMapping string, externalPort int, protocol, reason string) {
+func (ep *EventPublisher) PublishPortForwardDeletedEvent(ctx context.Context, service *corev1.Service, portName, portMapping string, externalPort int, protocol, reason string) {
 	logger := ctrllog.FromContext(ctx)
 
 	eventData := &PortForwardEventData{
@@ -114,10 +114,10 @@ func (ep *EventPublisher) PublishPortForwardDeletedEvent(ctx context.Context, se
 		ExternalPort:     externalPort,
 		Protocol:         protocol,
 		Reason:           reason,
-		Message:          fmt.Sprintf("%s (port %d, %s)", portMapping, externalPort, protocol),
+		Message:          fmt.Sprintf("%s(%s) (port %d)", portName, protocol, externalPort),
 	}
 
-	message := fmt.Sprintf("Deleted port forward rule: %s service: %s", eventData.Message, service.Name)
+	message := fmt.Sprintf("Deleted port forward rule '%s/%s:%s': %d(%s)", service.Namespace, service.Name, portName, externalPort, protocol)
 
 	if err := ep.createEvent(ctx, service, EventPortForwardDeleted, message, eventData); err != nil {
 		logger.Error(err, "Failed to publish PortForwardDeleted event")
@@ -187,8 +187,6 @@ func (ep *EventPublisher) createEvent(ctx context.Context, service *corev1.Servi
 	} else {
 		logger.Info("Event recorder not available, skipping event publication")
 	}
-
-	logger.V(1).Info("Event published", "event_type", eventType, "service", service.Name, "message", message)
 
 	return nil
 }

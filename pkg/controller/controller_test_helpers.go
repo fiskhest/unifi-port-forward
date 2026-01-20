@@ -55,10 +55,11 @@ func NewControllerTestEnv(t *testing.T) *ControllerTestEnv {
 
 	// Create controller with client assignment
 	controller := &PortForwardReconciler{
-		Client: fakeClient,
-		Router: mockRouter,
-		Scheme: scheme,
-		Config: &config.Config{Debug: true},
+		Client:         fakeClient,
+		Router:         mockRouter,
+		Scheme:         scheme,
+		Config:         &config.Config{Debug: true},
+		EventPublisher: NewEventPublisher(fakeClient, nil, scheme), // Recorder is nil for tests
 	}
 
 	// Initialize controller for new approach (maps and periodic refresh)
@@ -68,7 +69,10 @@ func NewControllerTestEnv(t *testing.T) *ControllerTestEnv {
 
 	// Initialize duplicate event detection
 	controller.recentCleanups = make(map[string]time.Time)
-	controller.cleanupWindow = 30 * time.Second
+	controller.cleanupWindow = 2 * time.Second
+
+	// Initialize cleanup retry tracking
+	controller.cleanupRetryCount = make(map[string]int)
 
 	return &ControllerTestEnv{
 		MockRouter: mockRouter,

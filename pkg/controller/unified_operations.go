@@ -190,6 +190,7 @@ func (r *PortForwardReconciler) calculateDelta(currentRules []*unifi.PortForward
 
 // executeOperations executes port operations with proper error handling and rollback
 func (r *PortForwardReconciler) executeOperations(ctx context.Context, operations []PortOperation) (*OperationResult, error) {
+	logger := ctrllog.FromContext(ctx)
 	result := &OperationResult{}
 	var completedOperations []PortOperation
 
@@ -226,7 +227,6 @@ func (r *PortForwardReconciler) executeOperations(ctx context.Context, operation
 			result.Failed = append(result.Failed, err)
 
 			// Attempt rollback of completed operations
-			logger := ctrllog.FromContext(ctx)
 			logger.Info("Operation failed, attempting rollback of completed operations",
 				"operation", op.String(),
 				"error", err)
@@ -241,17 +241,15 @@ func (r *PortForwardReconciler) executeOperations(ctx context.Context, operation
 			return result, fmt.Errorf("operation failed: %v", err)
 		} else {
 			completedOperations = append(completedOperations, op)
-			logger := ctrllog.FromContext(ctx)
 			logger.Info("Operation completed successfully",
 				"operation", op.String())
 		}
 	}
 
-	// logger := ctrllog.FromContext(ctx)
-	// logger.Info("All operations completed successfully",
-	// 	"created_count", len(result.Created),
-	// 	"updated_count", len(result.Updated),
-	// 	"deleted_count", len(result.Deleted))
+	logger.V(1).Info("All operations completed successfully",
+		"created_count", len(result.Created),
+		"updated_count", len(result.Updated),
+		"deleted_count", len(result.Deleted))
 
 	return result, nil
 }
@@ -309,7 +307,88 @@ func (r *PortForwardReconciler) rollbackOperations(ctx context.Context, operatio
 			logger := ctrllog.FromContext(ctx)
 			logger.Error(err, "Rollback operation failed",
 				"operation", op.String())
-			// Continue with other rollback operations
+		}
+	}
+
+	return nil
+}
+
+// executeCleanupOperations executes cleanup operations with proper error handling and rollback
+func (r *PortForwardReconciler) executeCleanupOperations(ctx context.Context, operations []PortOperation, cleanupReason string) (*OperationResult, error) {
+	logger := ctrllog.FromContext(ctx)
+	result := &OperationResult{}
+	var completedOperations []PortOperation
+
+	if r.Config.Debug {
+		ctrllog.FromContext(ctx).V(1).Info("Executing cleanup operations",
+			"total_operations", len(operations),
+			"cleanup_reason", cleanupReason)
+	}
+
+	// Validate all operations are DELETE operations
+	for _, op := range operations {
+		if op.Type != OpDelete {
+			return result, fmt.Errorf("executeCleanupOperations only supports DELETE operations, got %s", op.Type)
+		}
+	}
+
+	for _, op := range operations {
+		var err error
+
+		switch op.Type {
+		case OpDelete:
+			err = r.Router.RemovePort(ctx, op.Config)
+			if err == nil {
+				result.Deleted = append(result.Deleted, op.Config)
+				// Clean up port tracking to free the port for reuse
+				helpers.UnmarkPortUsed(op.Config.DstPort)
+			}
+		}
+
+		if err != nil {
+			result.Failed = append(result.Failed, err)
+
+			// Attempt rollback of completed operations
+			logger.Info("Cleanup operation failed, attempting rollback of completed operations",
+				"operation", op.String(),
+				"error", err)
+
+			rollbackErr := r.rollbackCleanupOperations(ctx, completedOperations)
+			if rollbackErr != nil {
+				logger.Error(rollbackErr, "Cleanup rollback also failed",
+					"completed_count", len(completedOperations))
+				return result, fmt.Errorf("cleanup operation failed: %v, cleanup rollback also failed: %v", err, rollbackErr)
+			}
+			return result, fmt.Errorf("cleanup operation failed: %v", err)
+		} else {
+			completedOperations = append(completedOperations, op)
+			logger.Info("Operation completed successfully", "operation", op)
+		}
+	}
+
+	logger.V(1).Info("All cleanup operations completed successfully",
+		"deleted_count", len(result.Deleted),
+		"cleanup_reason", cleanupReason)
+
+	return result, nil
+}
+
+// rollbackCleanupOperations attempts to rollback completed cleanup operations
+func (r *PortForwardReconciler) rollbackCleanupOperations(ctx context.Context, operations []PortOperation) error {
+	ctrllog.FromContext(ctx).Info("Rolling back completed cleanup operations",
+		"operation_count", len(operations))
+
+	// Rollback in reverse order
+	for i := len(operations) - 1; i >= 0; i-- {
+		op := operations[i]
+
+		// Cleanup operations are DELETE operations, so rollback is CREATE
+		err := r.Router.AddPort(ctx, op.Config)
+
+		if err != nil {
+			logger := ctrllog.FromContext(ctx)
+			logger.Error(err, "Cleanup rollback operation failed",
+				"operation", op.String())
 		}
 	}
 
@@ -318,7 +397,6 @@ func (r *PortForwardReconciler) rollbackOperations(ctx context.Context, operatio
 
 // calculateDesiredState generates the desired port configurations for a service
 func (r *PortForwardReconciler) calculateDesiredState(service *corev1.Service) ([]routers.PortConfig, error) {
-	// Extract LoadBalancer IP
 	lbIP := helpers.GetLBIP(service)
 	if lbIP == "" {
 		return nil, fmt.Errorf("service has no LoadBalancer IP")
@@ -336,7 +414,7 @@ func (r *PortForwardReconciler) calculateDesiredState(service *corev1.Service) (
 // detectPortConflicts finds existing rules that conflict with desired ports but have different names
 func (r *PortForwardReconciler) detectPortConflicts(currentRules []*unifi.PortForward, desiredConfigs []routers.PortConfig, service *corev1.Service) []PortOperation {
 	var operations []PortOperation
-	logger := ctrllog.FromContext(context.Background()).WithValues("service", service.Name, "namespace", service.Namespace)
+	logger := ctrllog.FromContext(context.Background())
 
 	// Build map of desired port configurations using dstPort-fwdPort-protocol as key
 	// This ensures we only detect true conflicts where both external and internal ports match

@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"sync"
@@ -22,6 +23,13 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
+)
+
+const (
+	MaxCleanupRetries         = 5
+	CleanupRetryStartInterval = 30 * time.Second
+	CleanupRetryMaxInterval   = 10 * time.Minute
+	CleanupDeadline           = 2 * time.Hour
 )
 
 // PortForwardReconciler reconciles Service resources
@@ -48,6 +56,9 @@ type PortForwardReconciler struct {
 	recentCleanups map[string]time.Time // serviceKey -> cleanup timestamp
 	cleanupMutex   sync.RWMutex         // protects recentCleanups
 	cleanupWindow  time.Duration        // how long to consider a cleanup "recent"
+
+	// Cleanup retry tracking
+	cleanupRetryCount map[string]int // serviceKey -> retry count
 }
 
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
@@ -73,7 +84,7 @@ func (r *PortForwardReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 			// CRITICAL FIX: Attempt cleanup even when service is not found
 			// This handles the race condition where service is deleted before reconciliation runs
 			if r.shouldAttemptCleanupForMissingService(req.NamespacedName) {
-				logger.Info("ATTEMPTING CLEANUP FOR MISSING SERVICE (RACE CONDITION)")
+				logger.Info("attempting cleanup for missing service (race condition)")
 				return r.handleMissingServiceCleanup(ctx, req.NamespacedName)
 			}
 
@@ -84,17 +95,13 @@ func (r *PortForwardReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		return ctrl.Result{}, err
 	}
 
-	logger.V(1).Info("Service fetched successfully",
+	logger.V(1).Info("Checking deletion status",
 		"namespace", service.Namespace,
 		"name", service.Name,
 		"deletion_timestamp", service.DeletionTimestamp,
 		"deletion_timestamp_is_zero", service.DeletionTimestamp.IsZero(),
 		"has_finalizer", controllerutil.ContainsFinalizer(service, config.FinalizerLabel),
 		"finalizers", service.Finalizers)
-
-	logger.V(1).Info("Checking deletion status",
-		"deletion_timestamp_is_zero", service.DeletionTimestamp.IsZero(),
-		"has_finalizer", controllerutil.ContainsFinalizer(service, config.FinalizerLabel))
 
 	if !service.DeletionTimestamp.IsZero() {
 		if controllerutil.ContainsFinalizer(service, config.FinalizerLabel) {
@@ -105,11 +112,9 @@ func (r *PortForwardReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		return ctrl.Result{}, nil
 	}
 
-	// Extract LoadBalancer IP once for the entire reconciliation
 	lbIP := helpers.GetLBIP(service)
 
 	if lbIP == "" {
-		logger.Info("NO LOADBALANCER IP - skipping")
 		return ctrl.Result{}, nil
 	}
 
@@ -333,52 +338,77 @@ func (r *PortForwardReconciler) processAllChanges(ctx context.Context, service *
 	if r.EventPublisher != nil && len(result.Created) > 0 {
 		for _, created := range result.Created {
 			lbIP := helpers.GetLBIP(service)
+			portName := helpers.GetPortNameByNumber(service, created.FwdPort)
 			r.EventPublisher.PublishPortForwardCreatedEvent(ctx, service,
-				fmt.Sprintf("%d:%d", created.DstPort, created.FwdPort),
-				lbIP, created.DstIP, created.DstPort, created.Protocol, "RulesCreatedSuccessfully")
+				portName, fmt.Sprintf("%d:%d", created.DstPort, created.FwdPort),
+				lbIP, created.DstIP, created.FwdPort, created.DstPort, created.Protocol, "RulesCreatedSuccessfully")
 		}
 
 		// Publish update events
 		for _, updated := range result.Updated {
 			lbIP := helpers.GetLBIP(service)
-			r.EventPublisher.PublishPortForwardUpdatedEvent(ctx, service,
+			// portName := helpers.GetPortNameByNumber(service, updated.FwdPort)
+			r.EventPublisher.PublishPortForwardUpdatedEvent(ctx, service, updated.Name,
 				fmt.Sprintf("%d:%d", updated.DstPort, updated.FwdPort),
 				lbIP, updated.DstIP, updated.DstPort, updated.Protocol, "RulesUpdatedSuccessfully")
 		}
 
 		// Publish deletion events
 		for _, deleted := range result.Deleted {
+			portName := helpers.GetPortNameByNumber(service, deleted.FwdPort)
 			r.EventPublisher.PublishPortForwardDeletedEvent(ctx, service,
-				fmt.Sprintf("%d:%d", deleted.DstPort, deleted.FwdPort),
-				deleted.DstPort, deleted.Protocol, "RulesDeletedSuccessfully")
+				portName, fmt.Sprintf("%d:%d", deleted.DstPort, deleted.FwdPort),
+				deleted.DstPort, deleted.Protocol, "RulesDeletedSuccessfully",
+			)
 		}
 	}
 	return operations, ctrl.Result{}, nil
 }
 
 // handleFinalizerCleanup performs cleanup when service is being deleted with finalizer
-// Simplified pattern - cleanup first, then always remove finalizer (never hangs)
+// New behavior: Only remove finalizer on successful cleanup, implement retry logic
 func (r *PortForwardReconciler) handleFinalizerCleanup(ctx context.Context, service *corev1.Service) (ctrl.Result, error) {
 	logger := ctrllog.FromContext(ctx)
 	serviceKey := fmt.Sprintf("%s/%s", service.Namespace, service.Name)
 
-	cleanupCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	// Check if we should give up on cleanup (5 retries + 2-hour deadline)
+	if r.shouldGiveUpOnCleanup(serviceKey) {
+		logger.Error(nil, "CLEANUP FAILED PERMANENTLY - manual intervention required",
+			"service", serviceKey,
+			"retry_count", r.getCleanupRetryCount(serviceKey),
+			"finalizer_status", "WILL_REMAIN_FOREVER",
+			"action", "service deletion is blocked until manual cleanup")
+		return ctrl.Result{}, nil // Don't requeue, but don't remove finalizer
+	}
+
+	cleanupCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
 	if err := r.finalizeService(cleanupCtx, service); err != nil {
-		// TODO: err no?
-		logger.Error(err, "CLEANUP FAILED, but removing finalizer anyway")
-	} else {
-		// Mark service as recently cleaned up to prevent duplicate processing
-		r.markServiceCleanup(serviceKey)
+		r.recordCleanupRetry(serviceKey)
+		interval := r.calculateRetryInterval(serviceKey)
+
+		logger.Error(err, "CLEANUP FAILED, will retry",
+			"service", serviceKey,
+			"retry_count", r.getCleanupRetryCount(serviceKey),
+			"retry_interval", interval,
+			"max_retries", MaxCleanupRetries,
+			"total_deadline", CleanupDeadline)
+
+		return ctrl.Result{RequeueAfter: interval}, err
 	}
 
-	// Always remove finalizer - never blocked by cleanup failures
-	// TODO: err no?
+	// Only remove finalizer on successful cleanup
+	r.clearCleanupRetries(serviceKey)
+
+	// Mark service as recently cleaned up to prevent duplicate processing
+	r.markServiceCleanup(serviceKey)
+
 	controllerutil.RemoveFinalizer(service, config.FinalizerLabel)
 
 	if err := r.Update(ctx, service); err != nil {
-		logger.Error(err, "removing finalizer")
+		logger.Error(err, "removing finalizer after successful cleanup",
+			"service", serviceKey)
 		return ctrl.Result{}, err
 	}
 
@@ -390,18 +420,17 @@ func (r *PortForwardReconciler) finalizeService(ctx context.Context, service *co
 	logger := ctrllog.FromContext(ctx)
 
 	// Get current port forward rules with timeout protection
+	// TODO: withAuthRetry on all ListAllPortForwards?
 	currentRules, err := r.Router.ListAllPortForwards(ctx)
 	if err != nil {
 		logger.Error(err, "listing port forwards during cleanup")
-		return err // Return error but don't block finalizer removal
+		return err // Return error to block finalizer removal
 	}
 
-	removedCount := 0
-	var cleanupErrors []string
-
+	// Generate DELETE operations for rules belonging to this service
+	var operations []PortOperation
 	for _, rule := range currentRules {
 		if helpers.RuleBelongsToService(rule.Name, service.Namespace, service.Name) {
-
 			// Convert string ports to int for PortConfig
 			dstPort := 0
 			if rule.DstPort != "" {
@@ -427,25 +456,37 @@ func (r *PortForwardReconciler) finalizeService(ctx context.Context, service *co
 				SrcIP:     rule.Src,
 			}
 
-			if err := r.Router.RemovePort(ctx, config); err != nil {
-				logger.Error(err, "removing port forward rule during cleanup",
-					"port", config.DstPort,
-					"rule_name", rule.Name)
-
-				cleanupErrors = append(cleanupErrors, fmt.Sprintf("port %d: %v", config.DstPort, err))
-			} else {
-				removedCount++
-
-				// Add port conflict tracking cleanup
-				helpers.UnmarkPortUsed(config.DstPort)
-			}
+			operations = append(operations, PortOperation{
+				Type:         OpDelete,
+				Config:       config,
+				ExistingRule: rule,
+				Reason:       "service_deletion_finalizer",
+			})
 		}
 	}
 
-	// Return error summary if there were cleanup failures (but don't block finalizer removal)
-	if len(cleanupErrors) > 0 {
-		return fmt.Errorf("cleanup completed with %d failures: %s", len(cleanupErrors), strings.Join(cleanupErrors, "; "))
+	// Execute cleanup operations with proper logging and rollback
+	result, err := r.executeCleanupOperations(ctx, operations, "ServiceCleanup")
+	if err != nil {
+		logger.Error(err, "cleanup operations failed",
+			"service", fmt.Sprintf("%s/%s", service.Namespace, service.Name),
+			"operations_planned", len(operations))
+		return err // Return error to block finalizer removal
 	}
+
+	// Publish deletion events for successfully removed ports
+	if r.EventPublisher != nil {
+		for _, deletedConfig := range result.Deleted {
+			portName := helpers.GetPortNameByNumber(service, deletedConfig.FwdPort)
+			r.EventPublisher.PublishPortForwardDeletedEvent(ctx, service,
+				portName, fmt.Sprintf("%d:%d", deletedConfig.DstPort, deletedConfig.FwdPort),
+				deletedConfig.DstPort, deletedConfig.Protocol, "ServiceCleanup")
+		}
+	}
+
+	logger.V(1).Info("service cleanup completed successfully",
+		"service", fmt.Sprintf("%s/%s", service.Namespace, service.Name),
+		"rules_removed", len(result.Deleted))
 
 	return nil
 }
@@ -661,7 +702,7 @@ func (r *PortForwardReconciler) shouldAttemptCleanupForMissingService(namespaced
 
 	// Primary check: internal service rule map
 	if rules, exists := r.serviceRuleMap[serviceKey]; exists && len(rules) > 0 {
-		logger.Info("DECISION: Cleanup needed - service has rules in internal map",
+		logger.V(1).Info("Cleanup needed - service has rules in internal map",
 			"rule_count", len(rules))
 		return true
 	}
@@ -676,26 +717,25 @@ func (r *PortForwardReconciler) shouldAttemptCleanupForMissingService(namespaced
 		}
 	}
 
-	logger.Info("DECISION: No cleanup needed - no tracked state found")
+	logger.V(1).Info("No cleanup needed - no tracked state found")
 	return false
 }
 
 // handleMissingServiceCleanup handles cleanup when service object is already deleted from Kubernetes
-// This is the critical race condition recovery path
+// This is critical race condition recovery path
 func (r *PortForwardReconciler) handleMissingServiceCleanup(ctx context.Context, namespacedName client.ObjectKey) (ctrl.Result, error) {
 	logger := ctrllog.FromContext(ctx)
-	// Get current router rules and delete any that match this service
+
 	currentRules, err := r.Router.ListAllPortForwards(ctx)
 	if err != nil {
 		logger.Error(err, "failed to list router rules for missing service cleanup")
 		return ctrl.Result{}, err
 	}
 
-	removedCount := 0
+	// Generate DELETE operations for rules belonging to this missing service
+	var operations []PortOperation
 	for _, rule := range currentRules {
 		if helpers.RuleBelongsToService(rule.Name, namespacedName.Namespace, namespacedName.Name) {
-			logger.Info("deleting rule for missing service", "rule_name", rule.Name)
-
 			// Convert string ports to int for PortConfig
 			dstPort := 0
 			if rule.DstPort != "" {
@@ -721,29 +761,40 @@ func (r *PortForwardReconciler) handleMissingServiceCleanup(ctx context.Context,
 				SrcIP:     rule.Src,
 			}
 
-			if err := r.Router.RemovePort(ctx, config); err != nil {
-				logger.Error(err, "failed to remove port forward rule for missing service",
-					"rule_name", rule.Name,
-					"dst_port", config.DstPort,
-					"error", err)
-			} else {
-				removedCount++
-
-				helpers.UnmarkPortUsed(config.DstPort)
-			}
+			operations = append(operations, PortOperation{
+				Type:         OpDelete,
+				Config:       config,
+				ExistingRule: rule,
+				Reason:       "missing_service_race_condition",
+			})
 		}
 	}
 
-	if removedCount > 0 {
-		// Mark service as recently cleaned up
-		r.markServiceCleanup(namespacedName.String())
+	if len(operations) == 0 {
+		logger.Info("no cleanup needed for missing service",
+			"service_key", namespacedName.String(),
+			"total_rules", len(currentRules))
+		return ctrl.Result{}, nil
 	}
 
-	logger.Info("missing service cleanup completed",
+	// Execute cleanup operations with proper logging and rollback
+	result, err := r.executeCleanupOperations(ctx, operations, "MissingServiceCleanup")
+	if err != nil {
+		logger.Error(err, "missing service cleanup operations failed",
+			"service_key", namespacedName.String(),
+			"operations_planned", len(operations))
+		// For missing services, return error without RequeueAfter
+		// since service is already deleted from Kubernetes
+		return ctrl.Result{}, err
+	}
+
+	// Mark service as recently cleaned up if any operations were performed
+	r.markServiceCleanup(namespacedName.String())
+
+	logger.Info("missing service cleanup completed successfully",
 		"service_key", namespacedName.String(),
 		"total_rules", len(currentRules),
-		"rules_removed", removedCount,
-		"cleanup_needed", removedCount > 0)
+		"rules_removed", len(result.Deleted))
 
 	// Return success - service is already deleted, no need to requeue
 	return ctrl.Result{}, nil
@@ -780,23 +831,76 @@ func (r *PortForwardReconciler) cleanupOldEntries() {
 	}
 }
 
+// recordCleanupRetry increments the retry count for a service
+func (r *PortForwardReconciler) recordCleanupRetry(serviceKey string) {
+	r.cleanupMutex.Lock()
+	defer r.cleanupMutex.Unlock()
+	r.cleanupRetryCount[serviceKey]++
+}
+
+// getCleanupRetryCount gets the current retry count for a service
+func (r *PortForwardReconciler) getCleanupRetryCount(serviceKey string) int {
+	r.cleanupMutex.RLock()
+	defer r.cleanupMutex.RUnlock()
+	return r.cleanupRetryCount[serviceKey]
+}
+
+// clearCleanupRetries removes retry tracking for a service
+func (r *PortForwardReconciler) clearCleanupRetries(serviceKey string) {
+	r.cleanupMutex.Lock()
+	defer r.cleanupMutex.Unlock()
+	delete(r.cleanupRetryCount, serviceKey)
+}
+
+// calculateRetryInterval calculates exponential backoff interval
+func (r *PortForwardReconciler) calculateRetryInterval(serviceKey string) time.Duration {
+	retryCount := r.getCleanupRetryCount(serviceKey)
+	// Exponential backoff: 30s * 2^retryCount, capped at 10 minutes
+	backoff := time.Duration(float64(CleanupRetryStartInterval) * math.Pow(2, float64(retryCount)))
+	if backoff > CleanupRetryMaxInterval {
+		backoff = CleanupRetryMaxInterval
+	}
+	return backoff
+}
+
+// shouldGiveUpOnCleanup checks if we should give up on cleanup due to retry limits and deadline
+func (r *PortForwardReconciler) shouldGiveUpOnCleanup(serviceKey string) bool {
+	retryCount := r.getCleanupRetryCount(serviceKey)
+
+	// Give up if we've exceeded max retries
+	if retryCount >= MaxCleanupRetries {
+		return true
+	}
+
+	// Check if total retry time exceeds deadline (approximate calculation)
+	var totalRetryTime time.Duration
+	for i := 0; i <= retryCount; i++ {
+		interval := time.Duration(float64(CleanupRetryStartInterval) * math.Pow(2, float64(i)))
+		if interval > CleanupRetryMaxInterval {
+			interval = CleanupRetryMaxInterval
+		}
+		totalRetryTime += interval
+	}
+
+	return totalRetryTime > CleanupDeadline
+}
+
 // SetupWithManager sets up the controller with a manager
 func (r *PortForwardReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	r.Recorder = mgr.GetEventRecorderFor("unifi-port-forwarder")
+	r.EventPublisher = NewEventPublisher(r.Client, r.Recorder, r.Scheme)
+
 	// Initialize internal state maps
 	r.ruleOwnerMap = make(map[string]string)
 	r.serviceRuleMap = make(map[string][]*unifi.PortForward)
 
-	// Initialize recorder
-	r.Recorder = mgr.GetEventRecorderFor("unifi-port-forwarder")
-
-	// 🆕 Initialize event publisher
-	r.EventPublisher = NewEventPublisher(r.Client, r.Recorder, r.Scheme)
-
 	// Initialize duplicate event detection
 	r.recentCleanups = make(map[string]time.Time)
-	r.cleanupWindow = 30 * time.Second
+	r.cleanupWindow = 2 * time.Second
 
-	// Use enhanced predicate for unified change detection
+	// Initialize cleanup retry tracking
+	r.cleanupRetryCount = make(map[string]int)
+
 	eventFilter := ServiceChangePredicate{}
 
 	return ctrl.NewControllerManagedBy(mgr).
@@ -806,9 +910,8 @@ func (r *PortForwardReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
-// Returns true if the states are identical, false if changes are needed
+// portConfigsMach returns true if the states are identical, false if changes are needed
 func (r *PortForwardReconciler) portConfigsMatch(ctx context.Context, currentRules []*unifi.PortForward, desiredConfigs []routers.PortConfig, expectedIP string) bool {
-	// Quick length check
 	if len(currentRules) != len(desiredConfigs) {
 		return false
 	}
@@ -830,12 +933,11 @@ func (r *PortForwardReconciler) portConfigsMatch(ctx context.Context, currentRul
 			return false // Rule doesn't exist
 		}
 
-		// Compare critical fields - use Fwd (actual forward IP) not DestinationIP (source IP, always "any")
 		if current.Fwd != expectedIP {
 			ctrllog.FromContext(ctx).Info("IP mismatch detected in portConfigsMatch",
 				"rule_name", current.Name,
 				"current_fwd_ip", current.Fwd,
-				"current_dst_ip", current.DestinationIP,
+				"desired_fwd_ip", desired.DstIP,
 				"expected_service_ip", expectedIP)
 			return false // IP changed
 		}
@@ -850,7 +952,6 @@ func (r *PortForwardReconciler) portConfigsMatch(ctx context.Context, currentRul
 
 // fallbackToIPChangeDetection provides fallback when desired state calculation fails
 func (r *PortForwardReconciler) fallbackToIPChangeDetection(currentRules []*unifi.PortForward, lbIP string, changeContext *ChangeContext) *ChangeContext {
-	// Use router-state comparison (more reliable than service status)
 	ipChanged, oldIP, newIP := compareIPsWithRouterState(lbIP, currentRules)
 	if ipChanged {
 		changeContext.IPChanged = true
@@ -865,13 +966,7 @@ func (r *PortForwardReconciler) analyzeDetailedChanges(currentRules []*unifi.Por
 	// Set IsInitialSync to false for processing
 	changeContext.IsInitialSync = false
 
-	// Check for IP changes using router-state comparison (more reliable than service status)
-	ipChanged, oldIP, newIP := compareIPsWithRouterState(lbIP, currentRules)
-	if ipChanged {
-		changeContext.IPChanged = true
-		changeContext.OldIP = oldIP
-		changeContext.NewIP = newIP
-	}
+	changeContext = r.fallbackToIPChangeDetection(currentRules, lbIP, changeContext)
 
 	if len(currentRules) == 0 && len(desiredConfigs) > 0 {
 		// New service - this counts as a spec change (adding ports)
@@ -884,7 +979,7 @@ func (r *PortForwardReconciler) analyzeDetailedChanges(currentRules []*unifi.Por
 		changeContext.SpecChanged = true
 	}
 
-	// Perform detailed analysis (existing logic)
+	// TODO: HAHA YOU FORGOT ABOUT THIS MOTHERFUCKING PIECE OF SHIT AI????
 	// This is where we can add granular change tracking in the future
 	return changeContext
 }
