@@ -304,3 +304,29 @@ func TestClearPortConflictTracking_InProduction(t *testing.T) {
 		t.Errorf("Expected no conflict after clearing tracking, got error: %v", err)
 	}
 }
+
+func TestParseIntField(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected int
+	}{
+		{"80", 80},
+		{"443", 443},
+		{"8080", 8080},
+		{"0", 0},
+		{"", 0},          // Empty string returns 0
+		{"invalid", 0},   // Invalid string returns 0
+		{"-1", 0},        // Negative numbers return 0
+		{"-100", 0},      // Negative numbers return 0
+		{"99999", 99999}, // Large valid number
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			result := ParseIntField(tt.input)
+			if result != tt.expected {
+				t.Errorf("ParseIntField(%q) = %d; expected %d", tt.input, result, tt.expected)
+			}
+		})
+	}
+}

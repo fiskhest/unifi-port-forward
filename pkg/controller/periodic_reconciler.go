@@ -3,7 +3,6 @@ package controller
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"sync"
 	"time"
 
@@ -199,22 +198,45 @@ func (r *PeriodicReconciler) correctServiceDrift(ctx context.Context, analysis *
 	_ = ctrllog.FromContext(ctx).WithValues("component", "periodic-reconciler", "service", analysis.ServiceName)
 
 	var operations []PortOperation
+	var createOperations []PortOperation
 
-	for _, missingRule := range analysis.MissingRules {
-		operations = append(operations, PortOperation{
-			Type:   OpCreate,
-			Config: missingRule,
-			Reason: "drift_missing_rule",
-		})
-	}
-
+	// Process DELETE operations first to free up ports for CREATE operations
 	for _, wrongRule := range analysis.WrongRules {
-		operations = append(operations, PortOperation{
-			Type:         OpUpdate,
-			Config:       wrongRule.Desired,
-			ExistingRule: wrongRule.Current,
-			Reason:       "drift_wrong_rule",
-		})
+		// Classify mismatch type for smart operation selection
+		if isSafeUpdate(wrongRule.MismatchType) {
+			// Safe change: direct update (can be processed immediately)
+			operations = append(operations, PortOperation{
+				Type:         OpUpdate,
+				Config:       wrongRule.Desired,
+				ExistingRule: wrongRule.Current,
+				Reason:       "drift_wrong_rule_safe",
+			})
+		} else {
+			// Risky change: delete then recreate
+			operations = append(operations, PortOperation{
+				Type: OpDelete,
+				Config: routers.PortConfig{
+					// Copy from current rule for deletion
+					Name:      wrongRule.Current.Name,
+					DstPort:   helpers.ParseIntField(wrongRule.Current.DstPort),
+					FwdPort:   helpers.ParseIntField(wrongRule.Current.FwdPort),
+					DstIP:     wrongRule.Current.Fwd,
+					Protocol:  wrongRule.Current.Proto,
+					Enabled:   wrongRule.Current.Enabled,
+					Interface: wrongRule.Current.PfwdInterface,
+					SrcIP:     wrongRule.Current.Src,
+				},
+				ExistingRule: wrongRule.Current,
+				Reason:       "drift_wrong_rule_delete",
+			})
+
+			// Defer CREATE operation until after all DELETEs
+			createOperations = append(createOperations, PortOperation{
+				Type:   OpCreate,
+				Config: wrongRule.Desired,
+				Reason: "drift_wrong_rule_create",
+			})
+		}
 	}
 
 	for _, extraRule := range analysis.ExtraRules {
@@ -222,8 +244,8 @@ func (r *PeriodicReconciler) correctServiceDrift(ctx context.Context, analysis *
 			Type: OpDelete,
 			Config: routers.PortConfig{
 				Name:      extraRule.Name,
-				DstPort:   r.parseIntField(extraRule.DstPort),
-				FwdPort:   r.parseIntField(extraRule.FwdPort),
+				DstPort:   helpers.ParseIntField(extraRule.DstPort),
+				FwdPort:   helpers.ParseIntField(extraRule.FwdPort),
 				DstIP:     extraRule.Fwd,
 				Protocol:  extraRule.Proto,
 				Enabled:   extraRule.Enabled,
@@ -235,6 +257,18 @@ func (r *PeriodicReconciler) correctServiceDrift(ctx context.Context, analysis *
 		})
 	}
 
+	// Process CREATE operations last (after all DELETEs to avoid conflicts)
+	for _, missingRule := range analysis.MissingRules {
+		createOperations = append(createOperations, PortOperation{
+			Type:   OpCreate,
+			Config: missingRule,
+			Reason: "drift_missing_rule",
+		})
+	}
+
+	// Add all CREATE operations to the end of the operations list
+	operations = append(operations, createOperations...)
+
 	result, err := r.executeOperations(ctx, operations)
 	if err != nil {
 		return fmt.Errorf("failed to execute drift correction operations: %w", err)
@@ -245,17 +279,6 @@ func (r *PeriodicReconciler) correctServiceDrift(ctx context.Context, analysis *
 	}
 
 	return nil
-}
-
-// parseIntField safely parses a string field to int
-func (r *PeriodicReconciler) parseIntField(field string) int {
-	if field == "" {
-		return 0
-	}
-	if result, err := strconv.Atoi(field); err == nil && result >= 0 {
-		return result
-	}
-	return 0
 }
 
 // executeOperations executes port operations with proper error handling

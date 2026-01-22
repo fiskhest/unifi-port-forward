@@ -14,8 +14,6 @@ func TestReconcile_EfficiencyImprovement(t *testing.T) {
 	env := NewControllerTestEnv(t)
 	defer env.Cleanup()
 
-	t.Logf("=== EFFICIENCY TEST START ===")
-
 	// Phase 1: Ensure clean test environment
 	t.Logf("Initial mock router state: %d rules", len(env.MockRouter.GetPortForwardRules()))
 	t.Logf("Initial operation counts: %+v", env.MockRouter.GetOperationCounts())
@@ -33,10 +31,7 @@ func TestReconcile_EfficiencyImprovement(t *testing.T) {
 	}
 
 	// Phase 2: Debug - Verify initial sync completed successfully
-	t.Logf("=== INITIAL SYNC COMPLETED ===")
-	t.Logf("Controller serviceRuleMap size: %d", len(env.Controller.serviceRuleMap))
-	t.Logf("Controller ruleOwnerMap size: %d", len(env.Controller.ruleOwnerMap))
-	t.Logf("Map version: %d", env.Controller.mapVersion)
+	t.Logf("Controller initialized with periodic reconciler for drift detection")
 	t.Logf("Mock router rules after sync: %d", len(env.MockRouter.GetPortForwardRules()))
 
 	// Phase 3: Reset for reconcile tracking

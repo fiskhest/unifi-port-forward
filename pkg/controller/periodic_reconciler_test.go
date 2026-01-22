@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"unifi-port-forwarder/pkg/config"
+	"unifi-port-forwarder/pkg/helpers"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -104,15 +105,7 @@ func TestPeriodicReconciler_shouldManageService(t *testing.T) {
 	}
 }
 
-func TestPeriodicReconciler_parseIntField(t *testing.T) {
-	// Test setup
-	scheme := runtime.NewScheme()
-	config := &config.Config{}
-	mockRecorder := record.NewFakeRecorder(10)
-	eventPublisher := NewEventPublisher(nil, mockRecorder, scheme)
-
-	reconciler := NewPeriodicReconciler(nil, scheme, nil, config, eventPublisher, mockRecorder)
-
+func TestParseIntField(t *testing.T) {
 	tests := []struct {
 		input    string
 		expected int
@@ -121,13 +114,13 @@ func TestPeriodicReconciler_parseIntField(t *testing.T) {
 		{"443", 443},
 		{"", 0},
 		{"invalid", 0},
-		{"-1", 0}, // parseIntField returns 0 for invalid numbers
+		{"-1", 0}, // ParseIntField returns 0 for invalid numbers
 		{"1000", 1000},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
-			result := reconciler.parseIntField(tt.input)
+			result := helpers.ParseIntField(tt.input)
 			if result != tt.expected {
 				t.Errorf("Expected %d, got %d", tt.expected, result)
 			}
@@ -159,4 +152,37 @@ func TestPeriodicReconciler_StartStop(t *testing.T) {
 
 	// Note: We can't easily test the stopCh closure without race conditions
 	// The important thing is that Stop() doesn't panic
+}
+
+func TestPeriodicReconciler_isSafeUpdate(t *testing.T) {
+	// Test setup
+	scheme := runtime.NewScheme()
+	config := &config.Config{}
+	mockRecorder := record.NewFakeRecorder(10)
+	eventPublisher := NewEventPublisher(nil, mockRecorder, scheme)
+
+	_ = NewPeriodicReconciler(nil, scheme, nil, config, eventPublisher, mockRecorder)
+
+	tests := []struct {
+		mismatchType string
+		expected     bool
+	}{
+		{"name", true},      // Safe update
+		{"ip", true},        // Safe update
+		{"enabled", true},   // Safe update
+		{"ownership", true}, // Safe update
+		{"fwdport", false},  // Risky - needs delete+create
+		{"port", false},     // Risky - needs delete+create
+		{"protocol", false}, // Risky - needs delete+create
+		{"unknown", false},  // Unknown - treat as risky
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.mismatchType, func(t *testing.T) {
+			result := isSafeUpdate(tt.mismatchType)
+			if result != tt.expected {
+				t.Errorf("Expected %v for mismatch type '%s', got %v", tt.expected, tt.mismatchType, result)
+			}
+		})
+	}
 }

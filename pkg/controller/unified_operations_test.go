@@ -109,8 +109,8 @@ func TestCalculateDelta_UpdateScenario(t *testing.T) {
 		t.Errorf("Expected UPDATE operation, got %s", operations[0].Type)
 	}
 
-	if operations[0].Reason != "configuration_mismatch" {
-		t.Errorf("Expected 'configuration_mismatch' reason, got %s", operations[0].Reason)
+	if operations[0].Reason != "configuration_mismatch_safe" {
+		t.Errorf("Expected 'configuration_mismatch_safe' reason, got %s", operations[0].Reason)
 	}
 }
 

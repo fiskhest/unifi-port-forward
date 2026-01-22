@@ -464,6 +464,18 @@ func extractServiceKeyFromRuleName(ruleName string) string {
 	return parts[0]
 }
 
+// ParseIntField parses a string field to int with graceful fallback
+// Returns 0 for empty strings, negative numbers, or parse errors
+func ParseIntField(field string) int {
+	if field == "" {
+		return 0
+	}
+	if result, err := strconv.Atoi(field); err == nil && result >= 0 {
+		return result
+	}
+	return 0
+}
+
 // RuleBelongsToService checks if a port forwarding rule belongs to a specific service
 // by performing exact matching of namespace and service name
 func RuleBelongsToService(ruleName, namespace, serviceName string) bool {

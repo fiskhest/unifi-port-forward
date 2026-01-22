@@ -23,25 +23,63 @@ func strToInt(s string) int {
 	return 0
 }
 
+// determineMismatchType identifies the type of mismatch between existing and desired rules
+func determineMismatchType(existingRule *unifi.PortForward, desiredConfig routers.PortConfig, changeContext *ChangeContext) string {
+	// Check for risky changes first (delete-then-recreate)
+	if existingRule.FwdPort != strconv.Itoa(desiredConfig.FwdPort) {
+		return "fwdport"
+	}
+	if existingRule.DstPort != strconv.Itoa(desiredConfig.DstPort) {
+		return "port"
+	}
+	if existingRule.Proto != desiredConfig.Protocol {
+		return "protocol"
+	}
+
+	// Check for safe changes (direct update)
+	// Detect IP change directly in addition to context flag
+	if changeContext.IPChanged || existingRule.Fwd != desiredConfig.DstIP {
+		return "ip"
+	}
+	if existingRule.Name != desiredConfig.Name {
+		return "name"
+	}
+	if existingRule.Enabled != desiredConfig.Enabled {
+		return "enabled"
+	}
+
+	return "" // No mismatch
+}
+
+// isSafeUpdate determines if a mismatch type can be safely updated in-place
+func isSafeUpdate(mismatchType string) bool {
+	safeTypes := map[string]bool{
+		"name":      true,
+		"ip":        true,
+		"enabled":   true,
+		"ownership": true,
+	}
+	return safeTypes[mismatchType]
+}
+
 /*
 Port Key Format Documentation:
 
-Two different key formats are used in this file:
+This file uses a consistent key format: "dstPort-fwdPort-protocol" (e.g., "8080-8081-tcp")
 
-1. For desired configurations: "dstPort-fwdPort-protocol" (e.g., "8080-8081-tcp")
-   - Maps desired service port configurations
-   - Used to track what should exist in router
-
-2. For current router state: "dstPort-fwdPort-protocol" (same format)
-   - Maps existing UniFi port forward rules
-   - Used to compare against desired configurations
-
-Both formats ensure uniqueness by including all three components:
+Key format ensures uniqueness by including all three components:
 - dstPort: External port number
 - fwdPort: Internal port number
 - protocol: TCP/UDP
 
-This allows accurate comparison between desired state and current router state.
+UniFi port forward rules are uniquely identified by the combination of
+DstPort + FwdPort + Protocol. This is critical because:
+- Multiple rules can have the same external port (dstPort)
+- Multiple rules can have the same internal port (fwdPort)
+- Only the full combination makes a rule unique
+
+This allows accurate comparison between desired state and current router state,
+and ensures proper detection of drift including FwdPort changes.
 */
 
 // OperationType represents the type of port operation
@@ -168,19 +206,44 @@ func (r *PortForwardReconciler) calculateDelta(currentRules []*unifi.PortForward
 				Reason: "port_not_yet_exists",
 			})
 		} else {
-			// Check if update needed (IP change or other differences)
-			needsUpdate := changeContext.IPChanged ||
-				existingRule.Fwd != desiredConfig.DstIP ||
-				existingRule.Name != desiredConfig.Name ||
-				existingRule.Enabled != desiredConfig.Enabled
+			// Use smart operation generation to handle mismatches safely
+			// This detects risky changes (FwdPort, DstPort, Protocol) and uses delete-then-recreate
+			mismatchType := determineMismatchType(existingRule, desiredConfig, changeContext)
 
-			if needsUpdate {
-				operations = append(operations, PortOperation{
-					Type:         OpUpdate,
-					Config:       desiredConfig,
-					ExistingRule: existingRule,
-					Reason:       "configuration_mismatch",
-				})
+			if mismatchType != "" {
+				if isSafeUpdate(mismatchType) {
+					// Safe change: direct update
+					operations = append(operations, PortOperation{
+						Type:         OpUpdate,
+						Config:       desiredConfig,
+						ExistingRule: existingRule,
+						Reason:       "configuration_mismatch_safe",
+					})
+				} else {
+					// Risky change: delete then recreate
+					operations = append(operations, PortOperation{
+						Type: OpDelete,
+						Config: routers.PortConfig{
+							// Copy from current rule for deletion
+							Name:      existingRule.Name,
+							DstPort:   helpers.ParseIntField(existingRule.DstPort),
+							FwdPort:   helpers.ParseIntField(existingRule.FwdPort),
+							DstIP:     existingRule.Fwd,
+							Protocol:  existingRule.Proto,
+							Enabled:   existingRule.Enabled,
+							Interface: existingRule.PfwdInterface,
+							SrcIP:     existingRule.Src,
+						},
+						ExistingRule: existingRule,
+						Reason:       "configuration_mismatch_delete",
+					})
+
+					operations = append(operations, PortOperation{
+						Type:   OpCreate,
+						Config: desiredConfig,
+						Reason: "configuration_mismatch_create",
+					})
+				}
 			}
 		}
 	}

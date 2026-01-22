@@ -12,7 +12,6 @@ import (
 	"unifi-port-forwarder/pkg/helpers"
 	"unifi-port-forwarder/testutils"
 
-	"github.com/filipowm/go-unifi/unifi"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -61,11 +60,6 @@ func NewControllerTestEnv(t *testing.T) *ControllerTestEnv {
 		Config:         &config.Config{Debug: true},
 		EventPublisher: NewEventPublisher(fakeClient, nil, scheme), // Recorder is nil for tests
 	}
-
-	// Initialize controller for new approach (maps and periodic refresh)
-	controller.ruleOwnerMap = make(map[string]string)
-	controller.serviceRuleMap = make(map[string][]*unifi.PortForward)
-	controller.mapVersion = 0
 
 	// Initialize duplicate event detection
 	controller.recentCleanups = make(map[string]time.Time)

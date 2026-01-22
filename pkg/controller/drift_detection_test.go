@@ -28,7 +28,7 @@ func TestDriftDetector_AnalyzeAllServicesDrift(t *testing.T) {
 		{
 			Name:    "default/perfect-service:http",
 			DstPort: "8080",
-			FwdPort: "80",
+			FwdPort: "8080",
 			Fwd:     "192.168.1.100",
 			Proto:   "tcp",
 			Enabled: true,
@@ -122,6 +122,77 @@ func TestDriftDetector_AggressiveOwnership(t *testing.T) {
 
 	if wrongRule.Desired.Name != "default/my-service:http" {
 		t.Errorf("Expected desired rule name 'default/my-service:http', got '%s'", wrongRule.Desired.Name)
+	}
+}
+
+func TestDriftDetector_FwdPortChangeDetection(t *testing.T) {
+	env := NewControllerTestEnv(t)
+	defer env.Cleanup()
+
+	// Test scenario: User manually changes FwdPort on router from 3001 to 3003
+	// This reproduces the specific issue reported by the user
+
+	// Create a service that wants DstPort=8080, FwdPort=3001
+	services := []*corev1.Service{
+		createTestServiceWithLB("default", "web-service2", map[string]string{
+			"unifi-port-forwarder/ports": "8080:3001",
+		}, "192.168.1.100"),
+	}
+
+	// Router has rule with different FwdPort (manual change from 3001 to 3003)
+	routerRules := []*unifi.PortForward{
+		{
+			Name:    "default/web-service2:3001", // Same name (belongs to our service)
+			DstPort: "8080",                      // Same external port
+			FwdPort: "3003",                      // Different internal port (manual change!)
+			Fwd:     "192.168.1.100",             // Same destination IP
+			Proto:   "tcp",                       // Same protocol
+			Enabled: true,                        // Same enabled state
+		},
+	}
+
+	// Create drift detector
+	detector := &DriftDetector{
+		Router: nil,
+	}
+
+	// Test analysis
+	analyses, err := detector.AnalyzeAllServicesDrift(context.Background(), services, routerRules)
+	if err != nil {
+		t.Fatalf("Expected no error, got %v", err)
+	}
+
+	// Should detect FwdPort change as missing + extra rules (can't update FwdPort in UniFi API)
+	analysis := analyses[0]
+	if !analysis.HasDrift {
+		t.Error("Expected drift due to FwdPort change")
+	}
+
+	// Should have missing rule for desired config and extra rule for old config
+	if len(analysis.MissingRules) != 1 {
+		t.Errorf("Expected 1 missing rule, got %d", len(analysis.MissingRules))
+	}
+
+	if len(analysis.ExtraRules) != 1 {
+		t.Errorf("Expected 1 extra rule, got %d", len(analysis.ExtraRules))
+	}
+
+	// Check missing rule (desired config not in router)
+	missingRule := analysis.MissingRules[0]
+	if missingRule.DstPort != 8080 {
+		t.Errorf("Expected missing rule DstPort 8080, got %d", missingRule.DstPort)
+	}
+	if missingRule.FwdPort != 3001 {
+		t.Errorf("Expected missing rule FwdPort 3001, got %d", missingRule.FwdPort)
+	}
+
+	// Check extra rule (router has old config)
+	extraRule := analysis.ExtraRules[0]
+	if extraRule.DstPort != "8080" {
+		t.Errorf("Expected extra rule DstPort '8080', got '%s'", extraRule.DstPort)
+	}
+	if extraRule.FwdPort != "3003" {
+		t.Errorf("Expected extra rule FwdPort '3003', got '%s'", extraRule.FwdPort)
 	}
 }
 
@@ -255,7 +326,7 @@ func TestDriftDetector_MixedScenarios(t *testing.T) {
 					Enabled: true,
 				},
 			},
-			expectedDrift: map[string]bool{"default/test1": false},
+			expectedDrift: map[string]bool{"default/test1": true},
 		},
 	}
 
