@@ -13,7 +13,7 @@ kind: Service
 metadata:
   name: multi-service
   annotations:
-    unifi-port-forwarder/ports: "80:http,443:https,9090:metrics"
+    unifi-port-forward.fiskhe.st/ports: "80:http,443:https,9090:metrics"
 spec:
   selector:
     app: multi-service

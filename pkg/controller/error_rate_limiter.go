@@ -8,8 +8,8 @@ import (
 	"time"
 
 	ctrl "sigs.k8s.io/controller-runtime"
-	"unifi-port-forwarder/pkg/routers"
-	"unifi-port-forwarder/testutils"
+	"unifi-port-forward/pkg/routers"
+	"unifi-port-forward/testutils"
 )
 
 // ErrorRateLimiter provides exponential backoff for error logging to reduce log spam

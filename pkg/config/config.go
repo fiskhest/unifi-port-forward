@@ -11,10 +11,11 @@ import (
 
 // Annotations and Labels that we are owners of
 const (
-	FilterAnnotation          = "unifi-port-forwarder/ports"
-	FinalizerLabel            = "unifi-port-forwarder/port-forward-cleanup"
-	CleanupStatusAnnotation   = "unifi-port-forwarder/cleanup-status"
-	CleanupAttemptsAnnotation = "unifi-port-forwarder/cleanup-attempts"
+	FilterAnnotation          = "unifi-port-forward.fiskhe.st/ports"
+	FinalizerLabel            = "unifi-port-forward.fiskhe.st/router-rule-protection"
+	CleanupStatusAnnotation   = "unifi-port-forward.fiskhe.st/cleanup-status"
+	CleanupAttemptsAnnotation = "unifi-port-forward.fiskhe.st/cleanup-attempts"
+	PortForwardRulesCRDName   = "portforwardrules.unifi-port-forward.fiskhe.st"
 )
 
 type Config struct {

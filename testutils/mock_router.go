@@ -8,7 +8,7 @@ import (
 	"sync"
 
 	"github.com/filipowm/go-unifi/unifi"
-	"unifi-port-forwarder/pkg/routers"
+	"unifi-port-forward/pkg/routers"
 )
 
 // MockRouter implements routers.Router interface for testing

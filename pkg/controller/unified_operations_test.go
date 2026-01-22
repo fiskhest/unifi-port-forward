@@ -3,9 +3,9 @@ package controller
 import (
 	"testing"
 
-	"unifi-port-forwarder/pkg/config"
-	"unifi-port-forwarder/pkg/helpers"
-	"unifi-port-forwarder/pkg/routers"
+	"unifi-port-forward/pkg/config"
+	"unifi-port-forward/pkg/helpers"
+	"unifi-port-forward/pkg/routers"
 
 	"github.com/filipowm/go-unifi/unifi"
 	corev1 "k8s.io/api/core/v1"
@@ -638,7 +638,7 @@ func TestConflictDetectionOwnershipTakeoverBug(t *testing.T) {
 			Name:      "web-service",
 			Namespace: "test-namespace",
 			Annotations: map[string]string{
-				"unifi-port-forwarder/ports": "89:http,91:https",
+				"unifi-port-forward.fiskhe.st/ports": "89:http,91:https",
 			},
 		},
 		Spec: corev1.ServiceSpec{
@@ -659,7 +659,7 @@ func TestConflictDetectionOwnershipTakeoverBug(t *testing.T) {
 	}
 
 	// Parse port configurations from annotation
-	configs, err := helpers.GetPortConfigs(service, "192.168.1.100", "unifi-port-forwarder/ports")
+	configs, err := helpers.GetPortConfigs(service, "192.168.1.100", "unifi-port-forward.fiskhe.st/ports")
 	if err != nil {
 		t.Fatalf("Failed to get port configs: %v", err)
 	}

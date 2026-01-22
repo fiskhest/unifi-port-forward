@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"unifi-port-forwarder/pkg/config"
-	"unifi-port-forwarder/pkg/helpers"
+	"unifi-port-forward/pkg/config"
+	"unifi-port-forward/pkg/helpers"
 
 	"github.com/filipowm/go-unifi/unifi"
 	v1 "k8s.io/api/core/v1"

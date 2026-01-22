@@ -167,7 +167,7 @@ func (ep *EventPublisher) createEvent(ctx context.Context, service *corev1.Servi
 
 	annotations := map[string]string{}
 	if eventDataJSON, err := json.Marshal(eventData); err == nil {
-		annotations["unifi-port-forwarder/event-data"] = string(eventDataJSON)
+		annotations["unifi-port-forward.fiskhe.st/event-data"] = string(eventDataJSON)
 	}
 
 	logger.V(1).Info("createEvent called", "recorder_nil", ep.recorder == nil, "annotations_count", len(annotations))

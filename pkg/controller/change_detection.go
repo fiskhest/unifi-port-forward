@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"reflect"
 
-	"unifi-port-forwarder/pkg/config"
-	"unifi-port-forwarder/pkg/helpers"
-	"unifi-port-forwarder/pkg/routers"
+	"unifi-port-forward/pkg/config"
+	"unifi-port-forward/pkg/helpers"
+	"unifi-port-forward/pkg/routers"
 
 	"github.com/filipowm/go-unifi/unifi"
 	corev1 "k8s.io/api/core/v1"

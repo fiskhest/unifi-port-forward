@@ -11,7 +11,7 @@ import (
 	// "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
-	"unifi-port-forwarder/pkg/config"
+	"unifi-port-forward/pkg/config"
 )
 
 func TestFinalizerDeletion_RealScenario(t *testing.T) {

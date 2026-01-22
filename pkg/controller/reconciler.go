@@ -9,9 +9,9 @@ import (
 	"sync"
 	"time"
 
-	"unifi-port-forwarder/pkg/config"
-	"unifi-port-forwarder/pkg/helpers"
-	"unifi-port-forwarder/pkg/routers"
+	"unifi-port-forward/pkg/config"
+	"unifi-port-forward/pkg/helpers"
+	"unifi-port-forward/pkg/routers"
 
 	"github.com/filipowm/go-unifi/unifi"
 
@@ -779,7 +779,7 @@ func (r *PortForwardReconciler) shouldGiveUpOnCleanup(serviceKey string) bool {
 
 // SetupWithManager sets up the controller with a manager
 func (r *PortForwardReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	r.Recorder = mgr.GetEventRecorderFor("unifi-port-forwarder")
+	r.Recorder = mgr.GetEventRecorderFor("unifi-port-forward")
 	r.EventPublisher = NewEventPublisher(r.Client, r.Recorder, r.Scheme)
 
 	// Legacy map initialization removed - now using fresh router state on every reconciliation

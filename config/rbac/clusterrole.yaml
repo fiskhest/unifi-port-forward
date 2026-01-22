@@ -3,34 +3,34 @@ kind: ClusterRole
 metadata:
   name: portforwardrule-controller
 rules:
-- apiGroups:
-  - ""
-  resources:
-  - services
-  verbs:
-  - get
-  - list
-  - watch
-- apiGroups:
-  - ""
-  resources:
-  - events
-  verbs:
-  - create
-  - patch
-- apiGroups:
-  - port-forwarder.unifi.com
-  resources:
-  - portforwardrules
-  verbs:
-  - get
-  - list
-  - watch
-- apiGroups:
-  - port-forwarder.unifi.com
-  resources:
-  - portforwardrules/status
-  verbs:
-  - get
-  - update
-  - patch
+  - apiGroups:
+      - ""
+    resources:
+      - services
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - ""
+    resources:
+      - events
+    verbs:
+      - create
+      - patch
+  - apiGroups:
+      - unifi-port-forward.fiskhe.st
+    resources:
+      - portforwardrules
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - unifi-port-forward.fiskhe.st
+    resources:
+      - portforwardrules/status
+    verbs:
+      - get
+      - update
+      - patch

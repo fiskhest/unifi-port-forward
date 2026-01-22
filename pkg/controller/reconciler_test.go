@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"unifi-port-forwarder/pkg/config"
+	"unifi-port-forward/pkg/config"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -1580,7 +1580,7 @@ func TestReconcile_PortConflictWithSimilarNames(t *testing.T) {
 	ctx := context.Background()
 
 	// Create first service web-service with port 3001
-	webService := env.CreateTestService("unifi-port-forwarder", "web-service",
+	webService := env.CreateTestService("default", "web-service",
 		map[string]string{config.FilterAnnotation: "3001:http"},
 		[]corev1.ServicePort{{Name: "http", Port: 80, Protocol: corev1.ProtocolTCP}},
 		"192.168.1.100")
@@ -1596,10 +1596,10 @@ func TestReconcile_PortConflictWithSimilarNames(t *testing.T) {
 	}
 
 	// Verify first rule exists
-	env.AssertRuleExistsByName(t, "unifi-port-forwarder/web-service:http")
+	env.AssertRuleExistsByName(t, "default/web-service:http")
 
 	// Create second service web-service2 with different port - this should NOT conflict
-	webService2 := env.CreateTestService("unifi-port-forwarder", "web-service2",
+	webService2 := env.CreateTestService("default", "web-service2",
 		map[string]string{config.FilterAnnotation: "3002:https"},
 		[]corev1.ServicePort{{Name: "https", Port: 443, Protocol: corev1.ProtocolTCP}},
 		"192.168.1.101")
@@ -1615,13 +1615,13 @@ func TestReconcile_PortConflictWithSimilarNames(t *testing.T) {
 	}
 
 	// Verify both rules exist independently
-	env.AssertRuleExistsByName(t, "unifi-port-forwarder/web-service:http")
-	env.AssertRuleExistsByName(t, "unifi-port-forwarder/web-service2:https")
+	env.AssertRuleExistsByName(t, "default/web-service:http")
+	env.AssertRuleExistsByName(t, "default/web-service2:https")
 
 	// Verify that the rules have different external ports (they should both use 3001)
 	// since they're different services with different internal ports
-	webRules := env.GetRuleNamesWithPrefix("unifi-port-forwarder/web-service:")
-	webService2Rules := env.GetRuleNamesWithPrefix("unifi-port-forwarder/web-service2:")
+	webRules := env.GetRuleNamesWithPrefix("default/web-service:")
+	webService2Rules := env.GetRuleNamesWithPrefix("default/web-service2:")
 
 	if len(webRules) != 1 {
 		t.Errorf("Expected 1 rule for web-service, got %d: %v", len(webRules), webRules)
@@ -1631,22 +1631,22 @@ func TestReconcile_PortConflictWithSimilarNames(t *testing.T) {
 	}
 
 	// Test deletion isolation - delete web-service and ensure web-service2 remains
-	if err := env.DeleteServiceByName(ctx, "unifi-port-forwarder", "web-service"); err != nil {
+	if err := env.DeleteServiceByName(ctx, "default", "web-service"); err != nil {
 		t.Fatalf("Failed to delete web-service: %v", err)
 	}
 
 	req := ctrl.Request{
 		NamespacedName: types.NamespacedName{
 			Name:      "web-service",
-			Namespace: "unifi-port-forwarder",
+			Namespace: "default",
 		},
 	}
 	result, err := env.Controller.Reconcile(ctx, req)
 	env.AssertReconcileSuccess(t, result, err)
 
 	// Verify web-service rule is deleted but web-service2 rule remains
-	env.AssertRuleDoesNotExistByName(t, "unifi-port-forwarder/web-service:http")
-	env.AssertRuleExistsByName(t, "unifi-port-forwarder/web-service2:https")
+	env.AssertRuleDoesNotExistByName(t, "default/web-service:http")
+	env.AssertRuleExistsByName(t, "default/web-service2:https")
 
 	t.Log("✅ Port conflict with similar names test passed - bug is fixed")
 }

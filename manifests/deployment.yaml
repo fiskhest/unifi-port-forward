@@ -1,44 +1,44 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: unifi-port-forwarder
+  name: unifi-port-forward
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: unifi-port-forwarder
+      app: unifi-port-forward
   template:
     metadata:
       labels:
-        app: unifi-port-forwarder
+        app: unifi-port-forward
     spec:
       hostNetwork: true
       dnsPolicy: ClusterFirstWithHostNet
-      serviceAccountName: unifi-port-forwarder
+      serviceAccountName: unifi-port-forward
       containers:
-        - name: unifi-port-forwarder
-          image: johrad/unifi-port-forwarder
+        - name: unifi-port-forward
+          image: johrad/unifi-port-forward
           imagePullPolicy: Always
           env:
             - name: UNIFI_USERNAME
-              value: unifi-port-forwarder
+              value: unifi-port-forward
             - name: UNIFI_ROUTER_IP
               value: 192.168.27.1
             - name: UNIFI_PASSWORD
-              value: q4Fz\5#hdhaMHc.TL6UNMX+$
+              value: q4Fz\5#hdhaMHc.TL6UNMX+$ // TODO: RENEW AND REDACT BEFORE PUBLISHING
             - name: DEBUG
               value: "True"
 ---
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: unifi-port-forwarder
-  namespace: unifi-port-forwarder
+  name: unifi-port-forward
+  namespace: unifi-port-forward
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: unifi-port-forwarder
+  name: unifi-port-forward
 rules:
   - apiGroups: [""]
     resources: ["services"]
@@ -46,13 +46,13 @@ rules:
   - apiGroups: [""]
     resources: ["events"]
     verbs: ["create", "patch"]
-  - apiGroups: ["portforwarder.unifi.com"]
+  - apiGroups: ["unifi-port-forward.fiskhe.st"]
     resources: ["portforwardrules"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: ["portforwarder.unifi.com"]
+  - apiGroups: ["unifi-port-forward.fiskhe.st"]
     resources: ["portforwardrules/status"]
     verbs: ["get", "update", "patch"]
-  - apiGroups: ["portforwarder.unifi.com"]
+  - apiGroups: ["unifi-port-forward.fiskhe.st"]
     resources: ["portforwardrules/finalizers"]
     verbs: ["update"]
   - apiGroups: ["coordination.k8s.io"]
@@ -65,12 +65,12 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: unifi-port-forwarder
+  name: unifi-port-forward
 subjects:
   - kind: ServiceAccount
-    name: unifi-port-forwarder
-    namespace: unifi-port-forwarder
+    name: unifi-port-forward
+    namespace: unifi-port-forward
 roleRef:
   kind: ClusterRole
-  name: unifi-port-forwarder
+  name: unifi-port-forward
   apiGroup: rbac.authorization.k8s.io

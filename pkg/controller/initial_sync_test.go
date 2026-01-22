@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"unifi-port-forwarder/pkg/config"
+	"unifi-port-forward/pkg/config"
 
 	corev1 "k8s.io/api/core/v1"
 )

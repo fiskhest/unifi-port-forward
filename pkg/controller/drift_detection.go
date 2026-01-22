@@ -7,9 +7,9 @@ import (
 	"strings"
 
 	"github.com/filipowm/go-unifi/unifi"
-	"unifi-port-forwarder/pkg/config"
-	"unifi-port-forwarder/pkg/helpers"
-	"unifi-port-forwarder/pkg/routers"
+	"unifi-port-forward/pkg/config"
+	"unifi-port-forward/pkg/helpers"
+	"unifi-port-forward/pkg/routers"
 
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"

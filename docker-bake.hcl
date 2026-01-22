@@ -1,5 +1,5 @@
 variable "REGISTRY" {
-  default = "johrad/unifi-port-forwarder"
+  default = "johrad/unifi-port-forward"
 }
 
 group "default" {

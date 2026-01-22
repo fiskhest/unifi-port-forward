@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"unifi-port-forwarder/pkg/routers"
-	"unifi-port-forwarder/testutils"
+	"unifi-port-forward/pkg/routers"
+	"unifi-port-forward/testutils"
 )
 
 func TestErrorRateLimiter_ShouldLogError(t *testing.T) {
@@ -338,7 +338,7 @@ func TestErrorRateLimiter_BugReproduction(t *testing.T) {
 	erl := NewErrorRateLimiterWithTime(mockClock)
 	defer erl.Stop()
 
-	serviceKey := "unifi-port-forwarder/web-service"
+	serviceKey := "default/web-service"
 	err := errors.New("failed to parse port mapping: invalid port mapping 'http:3001': invalid external port 'http' in mapping 'http:3001' - must be a number between 1-65535. Valid format: 'externalPort:portname' or 'portname'. Example: '8080:http,8443:https'")
 
 	t.Logf("=== Reproducing bug scenario from logs ===")

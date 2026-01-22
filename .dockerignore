@@ -21,7 +21,7 @@ test-manifest.yaml
 
 # Build artifacts
 *.exe
-unifi-port-forwarder
+unifi-port-forward
 service-debugger
 cleaner
 

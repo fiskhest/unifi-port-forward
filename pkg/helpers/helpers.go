@@ -8,12 +8,14 @@ import (
 	"sync"
 	"testing"
 
+	"unifi-port-forward/pkg/config"
+	"unifi-port-forward/pkg/routers"
+
 	"github.com/filipowm/go-unifi/unifi"
 	v1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"unifi-port-forwarder/pkg/routers"
 )
 
 // Port conflict detection and tracking
@@ -498,7 +500,7 @@ func RuleBelongsToService(ruleName, namespace, serviceName string) bool {
 
 // IsPortForwardRuleCRDAvailable checks if the PortForwardRule CRD exists and is established
 func IsPortForwardRuleCRDAvailable(ctx context.Context, client client.Client) bool {
-	crdName := "portforwardrules.port-forwarder.unifi.com"
+	crdName := config.PortForwardRulesCRDName
 
 	// Try to get the CRD
 	crd := &apiextensionsv1.CustomResourceDefinition{}

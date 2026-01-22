@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"unifi-port-forwarder/pkg/config"
-	"unifi-port-forwarder/pkg/helpers"
+	"unifi-port-forward/pkg/config"
+	"unifi-port-forward/pkg/helpers"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -64,7 +64,7 @@ func TestPeriodicReconciler_shouldManageService(t *testing.T) {
 			service: &corev1.Service{
 				ObjectMeta: metav1.ObjectMeta{
 					Annotations: map[string]string{
-						"unifi-port-forwarder/ports": "8080:80",
+						"unifi-port-forward.fiskhe.st/ports": "8080:80",
 					},
 				},
 				Status: corev1.ServiceStatus{
@@ -84,7 +84,7 @@ func TestPeriodicReconciler_shouldManageService(t *testing.T) {
 			service: &corev1.Service{
 				ObjectMeta: metav1.ObjectMeta{
 					Annotations: map[string]string{
-						"unifi-port-forwarder/ports": "8080:80",
+						"unifi-port-forward.fiskhe.st/ports": "8080:80",
 					},
 				},
 				Status: corev1.ServiceStatus{

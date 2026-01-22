@@ -28,7 +28,7 @@ go tool cover -html=coverage.out
 The test suite covers:
 
 ### Add Operations
-- ✅ LoadBalancer service creation with `unifi-port-forwarder/ports` annotation
+- ✅ LoadBalancer service creation with `unifi-port-forward.fiskhe.st/ports` annotation
 - ✅ Port forward rule creation on router
 - ✅ Multi-port support with name-based mapping
 - ✅ Service validation (type, annotation, IP)
@@ -187,7 +187,7 @@ env := NewControllerTestEnv(t)
 defer env.Cleanup()
 
 service := env.CreateTestService("default", "test-service", 
-    map[string]string{config.FilterAnnotation: "http:8080"},
+    map[string]string{config.FilterAnnotation: "8080:http"},
     []corev1.ServicePort{{Name: "http", Port: 80}},
     "192.168.1.100")
 ```

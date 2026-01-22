@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"unifi-port-forwarder/pkg/routers"
+	"unifi-port-forward/pkg/routers"
 )
 
 // TestMockRouter_SimulatedFailure tests basic mock router failure logic

@@ -3,20 +3,20 @@
 #### 1:1 Mapping
 ```yaml
 # Use service port as external port
-unifi-port-forwarder/ports: "http"
+unifi-port-forward.fiskhe.st/ports: "http"
 ```
 Creates a port forward rule for the servicePort named http using its Port as both WAN and LAN (forwarded) port. Comma separate for more than one port.
 
 #### Mixed Mapping
 ```yaml
 # Some custom, some with 1:1
-unifi-port-forwarder/ports: "8080:http,443:https,9090:metrics"
+unifi-port-forward.fiskhe.st/ports: "8080:http,443:https,9090:metrics"
 ```
 
 #### Defined mapping
 ```yaml
 # Some custom, some with 1:1
-unifi-port-forwarder/ports: "8080:http"
+unifi-port-forward.fiskhe.st/ports: "8080:http"
 ```
 Creates a port forward rule for WAN port 8080 going to the servicePort named http as LAN (forwarded) port. Comma separate for more than one port.
 
@@ -38,14 +38,14 @@ The controller prevents external port conflicts across different services. If tw
 
 ## CLI Commands
 
-The `unifi-port-forwarder` provides four commands:
+The `unifi-port-forward` provides four commands:
 
 ### controller (default)
 Run Kubernetes controller for automatic port forwarding:
 ```bash
-./unifi-port-forwarder controller
+./unifi-port-forward controller
 # or simply
-./unifi-port-forwarder
+./unifi-port-forward
 ```
 
 ### debug

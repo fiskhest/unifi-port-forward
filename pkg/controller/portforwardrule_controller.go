@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"time"
 
-	"unifi-port-forwarder/pkg/api/v1alpha1"
-	"unifi-port-forwarder/pkg/config"
-	"unifi-port-forwarder/pkg/routers"
+	"unifi-port-forward/pkg/api/v1alpha1"
+	"unifi-port-forward/pkg/config"
+	"unifi-port-forward/pkg/routers"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -30,9 +30,9 @@ type PortForwardRuleReconciler struct {
 	Recorder record.EventRecorder
 }
 
-// +kubebuilder:rbac:groups=portforwarder.unifi.com,resources=portforwardrules,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=portforwarder.unifi.com,resources=portforwardrules/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=portforwarder.unifi.com,resources=portforwardrules/finalizers,verbs=update
+// +kubebuilder:rbac:groups=unifi-port-forward.fiskhe.st,resources=portforwardrules,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=unifi-port-forward.fiskhe.st,resources=portforwardrules/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=unifi-port-forward.fiskhe.st,resources=portforwardrules/finalizers,verbs=update
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 
@@ -40,7 +40,6 @@ type PortForwardRuleReconciler struct {
 func (r *PortForwardRuleReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := ctrllog.FromContext(ctx).WithValues("portforwardrule", req.NamespacedName)
 
-	// Fetch the PortForwardRule instance
 	rule := &v1alpha1.PortForwardRule{}
 	if err := r.Get(ctx, req.NamespacedName, rule); err != nil {
 		if errors.IsNotFound(err) {
@@ -51,9 +50,8 @@ func (r *PortForwardRuleReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return ctrl.Result{}, err
 	}
 
-	// Add finalizer if not present
-	if !controllerutil.ContainsFinalizer(rule, "portforwarder.unifi.com/finalizer") {
-		controllerutil.AddFinalizer(rule, "portforwarder.unifi.com/finalizer")
+	if !controllerutil.ContainsFinalizer(rule, config.FinalizerLabel) {
+		controllerutil.AddFinalizer(rule, config.FinalizerLabel)
 		if err := r.Update(ctx, rule); err != nil {
 			logger.Error(err, "Failed to add finalizer")
 			return ctrl.Result{}, err
@@ -61,26 +59,22 @@ func (r *PortForwardRuleReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return ctrl.Result{Requeue: true}, nil
 	}
 
-	// Handle deletion
 	if !rule.DeletionTimestamp.IsZero() {
 		return r.handleRuleDeletion(ctx, req.NamespacedName)
 	}
 
-	// Validate the rule
 	if err := r.validateRule(ctx, rule); err != nil {
 		logger.Error(err, "Rule validation failed")
 		r.updateRuleStatus(ctx, rule, v1alpha1.PhaseFailed, err.Error())
 		return ctrl.Result{}, err
 	}
 
-	// Reconcile the port forwarding rule
 	if err := r.reconcilePortForwardRule(ctx, rule); err != nil {
 		logger.Error(err, "Failed to reconcile port forwarding rule")
 		r.updateRuleStatus(ctx, rule, v1alpha1.PhaseFailed, err.Error())
 		return ctrl.Result{}, err
 	}
 
-	// Update status to Active
 	r.updateRuleStatus(ctx, rule, v1alpha1.PhaseActive, "")
 
 	logger.Info("Successfully reconciled PortForwardRule")
@@ -89,19 +83,16 @@ func (r *PortForwardRuleReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 
 // validateRule validates the PortForwardRule
 func (r *PortForwardRuleReconciler) validateRule(ctx context.Context, rule *v1alpha1.PortForwardRule) error {
-	// Basic validation
 	if err := rule.ValidateCreate(); len(err) > 0 {
 		return fmt.Errorf("validation failed: %v", err)
 	}
 
-	// Service-specific validation
 	if rule.Spec.ServiceRef != nil {
 		if validationErrs := rule.ValidateServiceExists(ctx, r.Client); len(validationErrs) > 0 {
 			return fmt.Errorf("service validation failed: %v", validationErrs)
 		}
 	}
 
-	// Cross-namespace validation
 	if conflictErrs := rule.ValidateCrossNamespacePortConflict(ctx, r.Client); len(conflictErrs) > 0 {
 		// For cross-namespace conflicts, we update status with warnings
 		// but don't fail reconciliation unless it's same-namespace conflict
@@ -119,7 +110,6 @@ func (r *PortForwardRuleReconciler) validateRule(ctx context.Context, rule *v1al
 func (r *PortForwardRuleReconciler) reconcilePortForwardRule(ctx context.Context, rule *v1alpha1.PortForwardRule) error {
 	logger := ctrllog.FromContext(ctx)
 
-	// Get destination IP and port
 	var destIP string
 	var destPort int
 	var err error
@@ -137,13 +127,11 @@ func (r *PortForwardRuleReconciler) reconcilePortForwardRule(ctx context.Context
 		return fmt.Errorf("failed to get destination: %w", err)
 	}
 
-	// Get source IP restriction
 	srcIP := ""
 	if rule.Spec.SourceIPRestriction != nil {
 		srcIP = *rule.Spec.SourceIPRestriction
 	}
 
-	// Create router port forwarding rule
 	routerRule := routers.PortConfig{
 		Name:      fmt.Sprintf("portforward-%s-%s-%d", rule.Namespace, rule.Name, rule.Spec.ExternalPort),
 		Enabled:   rule.Spec.Enabled,
@@ -155,35 +143,28 @@ func (r *PortForwardRuleReconciler) reconcilePortForwardRule(ctx context.Context
 		Protocol:  rule.Spec.Protocol,
 	}
 
-	// Check if rule already exists
 	existingRule, exists, err := r.Router.CheckPort(ctx, rule.Spec.ExternalPort, rule.Spec.Protocol)
 	if err != nil {
 		return fmt.Errorf("failed to check existing router rule: %w", err)
 	}
 
-	// Apply the rule on the router
 	if exists && existingRule != nil {
-		// Update existing rule
 		if err := r.Router.UpdatePort(ctx, rule.Spec.ExternalPort, routerRule); err != nil {
 			return fmt.Errorf("failed to update router rule: %w", err)
 		}
 	} else {
-		// Create new rule
 		if err := r.Router.AddPort(ctx, routerRule); err != nil {
 			return fmt.Errorf("failed to create router rule: %w", err)
 		}
 	}
 
-	// For now, use a generated rule ID based on external port
 	ruleID := fmt.Sprintf("port-%d", rule.Spec.ExternalPort)
 
-	// Update rule status
 	now := metav1.Now()
 	rule.Status.RouterRuleID = ruleID
 	rule.Status.LastAppliedTime = &now
 	rule.Status.ObservedGeneration = rule.Generation
 
-	// Update service status if applicable
 	if rule.Spec.ServiceRef != nil {
 		namespace := rule.Namespace
 		if rule.Spec.ServiceRef.Namespace != nil {
@@ -198,7 +179,6 @@ func (r *PortForwardRuleReconciler) reconcilePortForwardRule(ctx context.Context
 		}
 	}
 
-	// Record event
 	r.Recorder.Event(rule, corev1.EventTypeNormal, "RuleApplied",
 		fmt.Sprintf("Port forwarding rule applied to router (ID: %s)", ruleID))
 
@@ -218,7 +198,6 @@ func (r *PortForwardRuleReconciler) getServiceDestination(ctx context.Context, r
 		return "", 0, fmt.Errorf("failed to get service: %w", err)
 	}
 
-	// Get LoadBalancer IP
 	var destIP string
 	if service.Spec.Type == corev1.ServiceTypeLoadBalancer {
 		for _, ingress := range service.Status.LoadBalancer.Ingress {
@@ -251,10 +230,8 @@ func (r *PortForwardRuleReconciler) getServiceDestination(ctx context.Context, r
 
 // updateRuleStatus updates the status of the PortForwardRule
 func (r *PortForwardRuleReconciler) updateRuleStatus(ctx context.Context, rule *v1alpha1.PortForwardRule, phase, errorMsg string) {
-	// Update phase
 	rule.Status.Phase = phase
 
-	// Update conditions
 	conditionType := "RuleReady"
 	status := metav1.ConditionFalse
 	reason := "Failed"
@@ -328,19 +305,18 @@ func (r *PortForwardRuleReconciler) handleRuleDeletion(ctx context.Context, name
 			}
 			if err := r.Router.RemovePort(ctx, routerRule); err != nil {
 				logger.Error(err, "Failed to delete router rule", "routerRuleID", rule.Status.RouterRuleID)
-				// Don't return error so finalizer can be removed
+				// no `return err` here so finalizer can be removed
 			}
 		}
 
-		// Remove finalizer
-		controllerutil.RemoveFinalizer(rule, "port-forwarder.unifi.com/finalizer")
+		controllerutil.RemoveFinalizer(rule, "unifi-port-forward.fiskhe.st/router-rule-protection")
 		if err := r.Update(ctx, rule); err != nil {
 			logger.Error(err, "Failed to remove finalizer")
 			return ctrl.Result{}, err
 		}
 	}
 
-	logger.Info("Successfully handled PortForwardRule deletion")
+	logger.V(1).Info("Successfully handled PortForwardRule deletion")
 	return ctrl.Result{}, nil
 }
 

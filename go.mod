@@ -1,4 +1,4 @@
-module unifi-port-forwarder
+module unifi-port-forward
 
 go 1.23.6
 

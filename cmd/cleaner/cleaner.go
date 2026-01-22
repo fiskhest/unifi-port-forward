@@ -6,7 +6,7 @@ import (
 	"log"
 	"strconv"
 
-	"unifi-port-forwarder/pkg/routers"
+	"unifi-port-forward/pkg/routers"
 )
 
 // Config holds cleaner configuration

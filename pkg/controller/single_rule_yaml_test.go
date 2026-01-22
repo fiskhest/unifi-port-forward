@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"unifi-port-forwarder/pkg/config"
+	"unifi-port-forward/pkg/config"
 
 	corev1 "k8s.io/api/core/v1"
 )
@@ -18,7 +18,7 @@ func TestReconcile_SingleRuleYaml_PortRemoval(t *testing.T) {
 	defer env.Cleanup()
 
 	// Step 1: Create web-service with both ports (from single-rule.yaml)
-	webService := env.CreateTestService("unifi-port-forwarder", "web-service",
+	webService := env.CreateTestService("default", "web-service",
 		map[string]string{config.FilterAnnotation: "89:http,91:https"},
 		[]corev1.ServicePort{
 			{Name: "http", Port: 8080, Protocol: corev1.ProtocolTCP},
@@ -38,8 +38,8 @@ func TestReconcile_SingleRuleYaml_PortRemoval(t *testing.T) {
 	}
 
 	// Verify both rules are created
-	env.AssertRuleExistsByName(t, "unifi-port-forwarder/web-service:http")
-	env.AssertRuleExistsByName(t, "unifi-port-forwarder/web-service:https")
+	env.AssertRuleExistsByName(t, "default/web-service:http")
+	env.AssertRuleExistsByName(t, "default/web-service:https")
 
 	// Step 2: Edit away https port from web-service (the user's scenario)
 	updatedWebService := webService.DeepCopy()
@@ -61,8 +61,8 @@ func TestReconcile_SingleRuleYaml_PortRemoval(t *testing.T) {
 	}
 
 	// Verify final state - only http rule should remain
-	env.AssertRuleExistsByName(t, "unifi-port-forwarder/web-service:http")
-	env.AssertRuleDoesNotExistByName(t, "unifi-port-forwarder/web-service:https")
+	env.AssertRuleExistsByName(t, "default/web-service:http")
+	env.AssertRuleDoesNotExistByName(t, "default/web-service:https")
 
 	t.Log("✅ Single-rule.yaml port removal test passed - no rollback validation errors")
 }

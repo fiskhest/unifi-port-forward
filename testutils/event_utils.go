@@ -280,7 +280,7 @@ func (h *EventTestHelper) ExtractEventData(event corev1.Event) (*PortForwardEven
 		return nil, fmt.Errorf("event has no annotations")
 	}
 
-	eventDataStr := event.Annotations["unifi-port-forwarder/event-data"]
+	eventDataStr := event.Annotations["unifi-port-forward.fiskhe.st/event-data"]
 	if eventDataStr == "" {
 		return nil, fmt.Errorf("event has no event-data annotation")
 	}

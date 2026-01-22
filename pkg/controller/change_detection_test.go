@@ -6,7 +6,7 @@ import (
 	// "time"
 	"github.com/filipowm/go-unifi/unifi"
 
-	"unifi-port-forwarder/pkg/routers"
+	"unifi-port-forward/pkg/routers"
 
 	corev1 "k8s.io/api/core/v1"
 	// metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -178,7 +178,7 @@ func TestChangeAnalysis_PortChanges(t *testing.T) {
 // 					Name:      "test-service",
 // 					Namespace: "default",
 // 					Annotations: map[string]string{
-// 						"unifi-port-forwarder/ports": "8080:http",
+// 						"unifi-port-forward.fiskhe.st/ports": "8080:http",
 // 					},
 // 				},
 // 				Spec: corev1.ServiceSpec{
@@ -189,7 +189,7 @@ func TestChangeAnalysis_PortChanges(t *testing.T) {
 // 				ObjectMeta: metav1.ObjectMeta{
 // 					Name:              "test-service",
 // 					Namespace:         "default",
-// 					Annotations:       map[string]string{"unifi-port-forwarder/ports": "8080:http"},
+// 					Annotations:       map[string]string{"unifi-port-forward.fiskhe.st/ports": "8080:http"},
 // 					DeletionTimestamp: &metav1.Time{Time: time.Now()},
 // 				},
 // 				Spec: corev1.ServiceSpec{
@@ -413,7 +413,7 @@ func TestCompareIPsWithRouterState_ServiceStatusEmpty(t *testing.T) {
 		{
 			DstPort: "89",
 			Fwd:     "192.168.72.6", // Router has correct IP
-			Name:    "unifi-port-forwarder/web-service:http",
+			Name:    "unifi-port-forward/web-service:http",
 		},
 	}
 

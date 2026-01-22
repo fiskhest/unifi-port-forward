@@ -16,11 +16,11 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/spf13/cobra"
 	"sigs.k8s.io/yaml"
-	"unifi-port-forwarder/cmd/cleaner"
-	"unifi-port-forwarder/pkg/config"
-	"unifi-port-forwarder/pkg/controller"
-	"unifi-port-forwarder/pkg/helpers"
-	"unifi-port-forwarder/pkg/routers"
+	"unifi-port-forward/cmd/cleaner"
+	"unifi-port-forward/pkg/config"
+	"unifi-port-forward/pkg/controller"
+	"unifi-port-forward/pkg/helpers"
+	"unifi-port-forward/pkg/routers"
 
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -35,7 +35,7 @@ var (
 )
 
 var rootCmd = &cobra.Command{
-	Use:           "unifi-port-forwarder [command]",
+	Use:           "unifi-port-forward [command]",
 	Short:         "Kubernetes controller for automatic router port forwarding",
 	Long:          `Automatically configures router port forwarding for Kubernetes LoadBalancer services`,
 	SilenceUsage:  true,
@@ -120,17 +120,14 @@ var cleanCmd = &cobra.Command{
 }
 
 func runController(cmd *cobra.Command, args []string) error {
-	// Setup logging
 	logger := logr.FromSlogHandler(slog.Default().Handler())
 	ctrllog.SetLogger(logger)
 
-	// Create router
 	router, err := routers.CreateUnifiRouter(cfg.Host, cfg.Username, cfg.Password, cfg.Site, cfg.APIKey)
 	if err != nil {
 		return fmt.Errorf("failed to create router: %w", err)
 	}
 
-	// Create manager
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme: runtime.NewScheme(),
 		Metrics: server.Options{
@@ -141,7 +138,6 @@ func runController(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to create manager: %w", err)
 	}
 
-	// Setup scheme
 	if err := corev1.AddToScheme(mgr.GetScheme()); err != nil {
 		return fmt.Errorf("failed to add corev1 to scheme: %w", err)
 	}
@@ -149,7 +145,6 @@ func runController(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to add apiextensionsv1 to scheme: %w", err)
 	}
 
-	// Create reconciler
 	portforwardReconciler := &controller.PortForwardReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
@@ -157,22 +152,18 @@ func runController(cmd *cobra.Command, args []string) error {
 		Config: &cfg,
 	}
 
-	// Setup controller
 	if err := portforwardReconciler.SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("failed to setup controller: %w", err)
 	}
 
-	// Perform initial reconciliation sync
 	if err := portforwardReconciler.PerformInitialReconciliationSync(context.Background()); err != nil {
 		logger.Error(err, "Initial reconciliation sync failed, controller will use per-reconciliation syncs")
 		return fmt.Errorf("failed to perform initial sync: %w", err)
 	}
 
-	// Check if PortForwardRule CRD is available
 	if helpers.IsPortForwardRuleCRDAvailable(context.Background(), mgr.GetClient()) {
 		logger.Info("PortForwardRule CRD detected, enabling PortForwardRule CRD controller")
 
-		// Create PortForwardRule controller
 		ruleReconciler := &controller.PortForwardRuleReconciler{
 			Client:   mgr.GetClient(),
 			Scheme:   mgr.GetScheme(),
@@ -181,7 +172,6 @@ func runController(cmd *cobra.Command, args []string) error {
 			Recorder: mgr.GetEventRecorderFor("portforwardrule-controller"),
 		}
 
-		// Setup PortForwardRule controller
 		if err := ruleReconciler.SetupWithManager(mgr); err != nil {
 			return fmt.Errorf("failed to setup PortForwardRule controller: %w", err)
 		}
@@ -189,7 +179,6 @@ func runController(cmd *cobra.Command, args []string) error {
 		logger.Info("PortForwardRule CRD not found, PortForwardRule controller disabled (annotation-based mode only)")
 	}
 
-	// Create and start periodic reconciler (always on)
 	portforwardReconciler.PeriodicReconciler = controller.NewPeriodicReconciler(
 		mgr.GetClient(),
 		mgr.GetScheme(),
@@ -199,7 +188,6 @@ func runController(cmd *cobra.Command, args []string) error {
 		portforwardReconciler.Recorder,
 	)
 
-	// Start periodic reconciler in background
 	go func() {
 		logger := logr.FromSlogHandler(slog.Default().Handler()).WithValues("component", "periodic-reconciler-main")
 		if err := portforwardReconciler.PeriodicReconciler.Start(context.Background()); err != nil {
