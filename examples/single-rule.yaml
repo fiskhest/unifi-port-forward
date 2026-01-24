@@ -7,7 +7,7 @@ kind: Service
 metadata:
   name: web-service
   annotations:
-    unifi-port-forward.fiskhe.st/ports: "89:http,91:https"
+    unifi-port-forward.fiskhe.st/mapping: "89:http,91:https"
 spec:
   selector:
     app: web-service
@@ -28,7 +28,7 @@ kind: Service
 metadata:
   name: web-service2
   annotations:
-    unifi-port-forward.fiskhe.st/ports: "3001:http"
+    unifi-port-forward.fiskhe.st/mapping: "3001:http"
 spec:
   selector:
     app: web-service2

@@ -638,7 +638,7 @@ func TestConflictDetectionOwnershipTakeoverBug(t *testing.T) {
 			Name:      "web-service",
 			Namespace: "test-namespace",
 			Annotations: map[string]string{
-				"unifi-port-forward.fiskhe.st/ports": "89:http,91:https",
+				"unifi-port-forward.fiskhe.st/mapping": "89:http,91:https",
 			},
 		},
 		Spec: corev1.ServiceSpec{
@@ -659,7 +659,7 @@ func TestConflictDetectionOwnershipTakeoverBug(t *testing.T) {
 	}
 
 	// Parse port configurations from annotation
-	configs, err := helpers.GetPortConfigs(service, "192.168.1.100", "unifi-port-forward.fiskhe.st/ports")
+	configs, err := helpers.GetPortConfigs(service, "192.168.1.100", "unifi-port-forward.fiskhe.st/mapping")
 	if err != nil {
 		t.Fatalf("Failed to get port configs: %v", err)
 	}

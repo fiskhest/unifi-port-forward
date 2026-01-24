@@ -66,7 +66,7 @@ func TestPeriodicReconciler_shouldManageService(t *testing.T) {
 			service: &corev1.Service{
 				ObjectMeta: metav1.ObjectMeta{
 					Annotations: map[string]string{
-						"unifi-port-forward.fiskhe.st/ports": "8080:80",
+						"unifi-port-forward.fiskhe.st/mapping": "8080:80",
 					},
 				},
 				Status: corev1.ServiceStatus{
@@ -86,7 +86,7 @@ func TestPeriodicReconciler_shouldManageService(t *testing.T) {
 			service: &corev1.Service{
 				ObjectMeta: metav1.ObjectMeta{
 					Annotations: map[string]string{
-						"unifi-port-forward.fiskhe.st/ports": "8080:80",
+						"unifi-port-forward.fiskhe.st/mapping": "8080:80",
 					},
 				},
 				Status: corev1.ServiceStatus{

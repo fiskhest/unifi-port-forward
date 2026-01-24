@@ -11,7 +11,7 @@ import (
 
 // Annotations and Labels that we are owners of
 const (
-	FilterAnnotation          = "unifi-port-forward.fiskhe.st/ports"
+	FilterAnnotation          = "unifi-port-forward.fiskhe.st/mapping"
 	FinalizerLabel            = "unifi-port-forward.fiskhe.st/router-rule-protection"
 	CleanupStatusAnnotation   = "unifi-port-forward.fiskhe.st/cleanup-status"
 	CleanupAttemptsAnnotation = "unifi-port-forward.fiskhe.st/cleanup-attempts"

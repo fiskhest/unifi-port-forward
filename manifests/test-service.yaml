@@ -5,7 +5,7 @@ metadata:
   namespace: unifi-port-forward
   labels:
   annotations:
-    unifi-port-forward.fiskhe.st/ports: "801:http"
+    unifi-port-forward.fiskhe.st/mapping: "801:http"
 spec:
   selector:
     app: test

@@ -19,7 +19,7 @@ func TestDriftDetector_AnalyzeAllServicesDrift(t *testing.T) {
 	// Create a service with perfectly matching router rules
 	services := []*corev1.Service{
 		createTestServiceWithLB("default", "perfect-service", map[string]string{
-			"unifi-port-forward.fiskhe.st/ports": "8080:http",
+			"unifi-port-forward.fiskhe.st/mapping": "8080:http",
 		}, "192.168.1.100"),
 	}
 
@@ -74,7 +74,7 @@ func TestDriftDetector_AggressiveOwnership(t *testing.T) {
 	// Create a service
 	services := []*corev1.Service{
 		createTestServiceWithLB("default", "my-service", map[string]string{
-			"unifi-port-forward.fiskhe.st/ports": "8080:http",
+			"unifi-port-forward.fiskhe.st/mapping": "8080:http",
 		}, "192.168.1.100"),
 	}
 
@@ -135,7 +135,7 @@ func TestDriftDetector_FwdPortChangeDetection(t *testing.T) {
 	// Create a service that wants DstPort=8080, FwdPort=3001
 	services := []*corev1.Service{
 		createTestServiceWithLB("default", "web-service2", map[string]string{
-			"unifi-port-forward.fiskhe.st/ports": "8080:3001",
+			"unifi-port-forward.fiskhe.st/mapping": "8080:3001",
 		}, "192.168.1.100"),
 	}
 
@@ -208,7 +208,7 @@ func TestDriftDetector_MixedScenarios(t *testing.T) {
 			name: "missing rule scenario",
 			services: []*corev1.Service{
 				createTestServiceWithLB("default", "test1", map[string]string{
-					"unifi-port-forward.fiskhe.st/ports": "8080:http",
+					"unifi-port-forward.fiskhe.st/mapping": "8080:http",
 				}, "192.168.1.100"),
 			},
 			routerRules: []*unifi.PortForward{
@@ -220,7 +220,7 @@ func TestDriftDetector_MixedScenarios(t *testing.T) {
 			name: "extra rule scenario - duplicate port mapping",
 			services: []*corev1.Service{
 				createTestServiceWithLB("default", "test1", map[string]string{
-					"unifi-port-forward.fiskhe.st/ports": "8080:http",
+					"unifi-port-forward.fiskhe.st/mapping": "8080:http",
 				}, "192.168.1.100"),
 			},
 			routerRules: []*unifi.PortForward{
@@ -247,7 +247,7 @@ func TestDriftDetector_MixedScenarios(t *testing.T) {
 			name: "no router rules scenario",
 			services: []*corev1.Service{
 				createTestServiceWithLB("default", "test1", map[string]string{
-					"unifi-port-forward.fiskhe.st/ports": "8080:http",
+					"unifi-port-forward.fiskhe.st/mapping": "8080:http",
 				}, "192.168.1.100"),
 			},
 			routerRules: []*unifi.PortForward{
@@ -259,7 +259,7 @@ func TestDriftDetector_MixedScenarios(t *testing.T) {
 			name: "extra rule scenario - identical duplicate",
 			services: []*corev1.Service{
 				createTestServiceWithLB("default", "test1", map[string]string{
-					"unifi-port-forward.fiskhe.st/ports": "8080:http",
+					"unifi-port-forward.fiskhe.st/mapping": "8080:http",
 				}, "192.168.1.100"),
 			},
 			routerRules: []*unifi.PortForward{
@@ -286,7 +286,7 @@ func TestDriftDetector_MixedScenarios(t *testing.T) {
 			name: "correct port mapping scenario",
 			services: []*corev1.Service{
 				createTestServiceWithLB("default", "test1", map[string]string{
-					"unifi-port-forward.fiskhe.st/ports": "8080:80",
+					"unifi-port-forward.fiskhe.st/mapping": "8080:80",
 				}, "192.168.1.100"),
 			},
 			routerRules: []*unifi.PortForward{
@@ -313,7 +313,7 @@ func TestDriftDetector_MixedScenarios(t *testing.T) {
 			name: "no drift scenario with 8080:80 mapping",
 			services: []*corev1.Service{
 				createTestServiceWithLB("default", "test1", map[string]string{
-					"unifi-port-forward.fiskhe.st/ports": "8080:80",
+					"unifi-port-forward.fiskhe.st/mapping": "8080:80",
 				}, "192.168.1.100"),
 			},
 			routerRules: []*unifi.PortForward{
@@ -375,7 +375,7 @@ func createTestServiceWithLB(namespace, name string, annotations map[string]stri
 	var servicePorts []corev1.ServicePort
 
 	// Based on annotations, create appropriate service ports
-	if portAnn, exists := annotations["unifi-port-forward.fiskhe.st/ports"]; exists {
+	if portAnn, exists := annotations["unifi-port-forward.fiskhe.st/mapping"]; exists {
 		// Parse port mappings to determine what service ports to create
 		mappings := strings.Split(portAnn, ",")
 		for _, mapping := range mappings {

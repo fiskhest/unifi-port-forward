@@ -178,7 +178,7 @@ func TestChangeAnalysis_PortChanges(t *testing.T) {
 // 					Name:      "test-service",
 // 					Namespace: "default",
 // 					Annotations: map[string]string{
-// 						"unifi-port-forward.fiskhe.st/ports": "8080:http",
+// 						"unifi-port-forward.fiskhe.st/mapping": "8080:http",
 // 					},
 // 				},
 // 				Spec: corev1.ServiceSpec{
@@ -189,7 +189,7 @@ func TestChangeAnalysis_PortChanges(t *testing.T) {
 // 				ObjectMeta: metav1.ObjectMeta{
 // 					Name:              "test-service",
 // 					Namespace:         "default",
-// 					Annotations:       map[string]string{"unifi-port-forward.fiskhe.st/ports": "8080:http"},
+// 					Annotations:       map[string]string{"unifi-port-forward.fiskhe.st/mapping": "8080:http"},
 // 					DeletionTimestamp: &metav1.Time{Time: time.Now()},
 // 				},
 // 				Spec: corev1.ServiceSpec{

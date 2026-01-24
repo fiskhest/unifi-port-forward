@@ -139,7 +139,7 @@ The cleaner complements the main unifi-port-forward:
 
 ### Typical Workflow
 
-1. Deploy a service with `unifi-port-forward.fiskhe.st/ports` annotation (controller creates rules)
+1. Deploy a service with `unifi-port-forward.fiskhe.st/mapping` annotation (controller creates rules)
 2. Service is deleted but rule persists (stale rule)
 3. Use cleaner to remove the specific stale rule
 4. Use cleaner during maintenance to clean up multiple rules
