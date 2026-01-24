@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"log"
 	"net"
 	"net/url"
 	"os"
@@ -27,7 +28,8 @@ type Config struct {
 	APIKey   string `env:"UNIFI_API_KEY" json:"apiKey"`
 
 	// Application Settings
-	Debug bool `env:"DEBUG" default:"false" json:"debug"`
+	Debug        bool          `env:"DEBUG" default:"false" json:"debug"`
+	SyncInterval time.Duration `env:"UNIFI_SYNC_INTERVAL" default:"15m" json:"syncInterval"`
 
 	// Finalizer settings
 	FinalizerMaxRetries    int           `env:"FINALIZER_MAX_RETRIES" default:"3" json:"finalizerMaxRetries"`
@@ -56,6 +58,11 @@ func (c *Config) Validate() error {
 	// Validate site
 	if c.Site == "" {
 		errors = append(errors, "site cannot be empty")
+	}
+
+	// Validate sync interval
+	if c.SyncInterval < 5*time.Minute {
+		errors = append(errors, "sync interval cannot happen more often than every five minutes")
 	}
 
 	if len(errors) > 0 {
@@ -115,6 +122,13 @@ func InitFromEnv(cfg *Config) {
 	if envAPIKey := os.Getenv("UNIFI_API_KEY"); envAPIKey != "" {
 		cfg.APIKey = envAPIKey
 	}
+	if envSyncInterval := os.Getenv("UNIFI_SYNC_INTERVAL"); envSyncInterval != "" {
+		syncInterval, err := time.ParseDuration(envSyncInterval)
+		if err != nil {
+			log.Fatal(err)
+		}
+		cfg.SyncInterval = syncInterval
+	}
 	if envDebug := os.Getenv("DEBUG"); envDebug != "" {
 		cfg.Debug = envDebug != ""
 	}
@@ -130,6 +144,9 @@ func (c *Config) SetDefaults() {
 	}
 	if c.Site == "" {
 		c.Site = "default"
+	}
+	if c.SyncInterval == 0 {
+		c.SyncInterval = 15 * time.Minute
 	}
 }
 

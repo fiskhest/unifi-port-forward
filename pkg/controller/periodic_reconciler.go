@@ -30,9 +30,7 @@ type PeriodicReconciler struct {
 	stopCh         chan struct{}
 	eventPublisher *EventPublisher
 	recorder       record.EventRecorder
-
-	// Fixed interval - no configuration needed (15 minutes)  ### Fixed interval as specified TODO should be configurable from ENV
-	interval time.Duration
+	interval       time.Duration
 
 	// Concurrency control
 	semaphore             chan struct{}
@@ -48,7 +46,7 @@ func NewPeriodicReconciler(client client.Client, scheme *runtime.Scheme, router 
 		Config:         config,
 		eventPublisher: eventPublisher,
 		recorder:       recorder,
-		interval:       15 * time.Minute, // Fixed interval as specified TODO should be configurable from ENV
+		interval:       config.SyncInterval,
 		stopCh:         make(chan struct{}),
 		semaphore:      make(chan struct{}, 3), // Max 3 concurrent reconciliations
 	}

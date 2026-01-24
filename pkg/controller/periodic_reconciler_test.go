@@ -17,6 +17,10 @@ func TestNewPeriodicReconciler(t *testing.T) {
 	// Create test dependencies
 	scheme := runtime.NewScheme()
 	config := &config.Config{}
+
+	// Initialize config with default values
+	config.Load()
+
 	mockRecorder := record.NewFakeRecorder(10)
 
 	// Create a minimal event publisher for testing
