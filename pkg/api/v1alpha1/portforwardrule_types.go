@@ -1,6 +1,6 @@
-// Package v1alpha1 contains API Schema definitions for the port-forwarder v1alpha1 API group
+// Package v1alpha1 contains API Schema definitions for the unifi-port-forward v1alpha1 API group
 // +kubebuilder:object:generate=true
-// +groupName=port-forwarder.unifi.com
+// +groupName=unifi-port-forward.fiskhe.st
 package v1alpha1
 
 import (

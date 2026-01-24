@@ -28,7 +28,9 @@ func TestNewPeriodicReconciler(t *testing.T) {
 	// Basic assertions
 	if reconciler == nil {
 		t.Fatal("Expected reconciler to not be nil")
+		return
 	}
+
 	if reconciler.interval != 15*time.Minute {
 		t.Errorf("Expected interval to be 15 minutes, got %v", reconciler.interval)
 	}

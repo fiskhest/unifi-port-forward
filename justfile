@@ -8,6 +8,7 @@
 #   just test     # Run tests
 #   just lint     # Run linter
 #   just fmt      # Check formatting
+#   just build    # docker build
 
 # =============================================================================
 # Configuration
@@ -24,6 +25,7 @@ alias c := check
 alias t := test
 alias l := lint
 alias f := fmt
+alias b := build
 
 # =============================================================================
 # Default Recipe
@@ -55,3 +57,7 @@ alias f := fmt
 # Run all quality checks (combines test + lint + fmt)
 @check: test lint fmt
     echo "✅ All checks passed!"
+
+# Do docker build
+@build:
+    docker build --push -t johrad/unifi-port-forward .

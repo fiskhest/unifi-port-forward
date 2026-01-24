@@ -1,5 +1,5 @@
-// Package v1alpha1 contains API Schema definitions for the port-forwarder v1alpha1 API group
-// +groupName=port-forwarder.unifi.com
+// Package v1alpha1 contains API Schema definitions for the unifi-port-forward v1alpha1 API group
+// +groupName=unifi-port-forward.fiskhe.st
 package v1alpha1
 
 import (
@@ -9,7 +9,7 @@ import (
 
 var (
 	// SchemeGroupVersion is group version used to register these objects
-	SchemeGroupVersion = schema.GroupVersion{Group: "port-forwarder.unifi.com", Version: "v1alpha1"}
+	SchemeGroupVersion = schema.GroupVersion{Group: "unifi-port-forward.fiskhe.st", Version: "v1alpha1"}
 
 	// SchemeBuilder is used to add go types to the GroupVersionKind scheme
 	SchemeBuilder = &scheme.Builder{GroupVersion: SchemeGroupVersion}
@@ -17,3 +17,8 @@ var (
 	// AddToScheme adds the types in this group-version to the given scheme.
 	AddToScheme = SchemeBuilder.AddToScheme
 )
+
+// Register PortForwardRule and PortForwardRuleList types with the SchemeBuilder
+func init() {
+	SchemeBuilder.Register(&PortForwardRule{}, &PortForwardRuleList{})
+}

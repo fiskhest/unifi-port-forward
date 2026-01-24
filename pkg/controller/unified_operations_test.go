@@ -736,7 +736,9 @@ func TestConflictDetectionOwnershipTakeoverBug(t *testing.T) {
 	// Should have DELETE for port 91
 	if deleteOp == nil {
 		t.Fatal("Should have DELETE operation")
+		return
 	}
+
 	if deleteOp.Config.DstPort != 91 {
 		t.Errorf("DELETE should be for port 91, got %d", deleteOp.Config.DstPort)
 	}

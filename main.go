@@ -17,6 +17,7 @@ import (
 	"github.com/spf13/cobra"
 	"sigs.k8s.io/yaml"
 	"unifi-port-forward/cmd/cleaner"
+	"unifi-port-forward/pkg/api/v1alpha1"
 	"unifi-port-forward/pkg/config"
 	"unifi-port-forward/pkg/controller"
 	"unifi-port-forward/pkg/helpers"
@@ -144,6 +145,9 @@ func runController(cmd *cobra.Command, args []string) error {
 	if err := apiextensionsv1.AddToScheme(mgr.GetScheme()); err != nil {
 		return fmt.Errorf("failed to add apiextensionsv1 to scheme: %w", err)
 	}
+	if err := v1alpha1.AddToScheme(mgr.GetScheme()); err != nil {
+		return fmt.Errorf("failed to add v1alpha1 to scheme: %w", err)
+	}
 
 	portforwardReconciler := &controller.PortForwardReconciler{
 		Client: mgr.GetClient(),
@@ -161,8 +165,8 @@ func runController(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to perform initial sync: %w", err)
 	}
 
-	if helpers.IsPortForwardRuleCRDAvailable(context.Background(), mgr.GetClient()) {
-		logger.Info("PortForwardRule CRD detected, enabling PortForwardRule CRD controller")
+	if helpers.IsPortForwardRuleCRDAvailable(context.Background(), ctrl.GetConfigOrDie(), mgr.GetScheme()) {
+		logger.Info("PortForwardRule CRD controller enabled")
 
 		ruleReconciler := &controller.PortForwardRuleReconciler{
 			Client:   mgr.GetClient(),
