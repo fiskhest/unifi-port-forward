@@ -1,4 +1,4 @@
-apiVersion: port-forwarder.unifi.com/v1alpha1
+apiVersion: unifi-port-forward.fiskhe.st/v1alpha1
 kind: PortForwardRule
 metadata:
   name: minecraft-server

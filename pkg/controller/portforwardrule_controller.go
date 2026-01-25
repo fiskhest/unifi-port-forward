@@ -3,6 +3,8 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strings"
+	"sync"
 	"time"
 
 	"unifi-port-forward/pkg/api/v1alpha1"
@@ -28,17 +30,22 @@ type PortForwardRuleReconciler struct {
 	Router   routers.Router
 	Config   *config.Config
 	Recorder record.EventRecorder
-}
 
-// +kubebuilder:rbac:groups=unifi-port-forward.fiskhe.st,resources=portforwardrules,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=unifi-port-forward.fiskhe.st,resources=portforwardrules/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=unifi-port-forward.fiskhe.st,resources=portforwardrules/finalizers,verbs=update
-// +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch
-// +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
+	// activeReconciliations tracks ongoing reconciliations per resource
+	activeReconciliations sync.Map
+}
 
 // Reconcile implements the reconciliation logic for PortForwardRule resources
 func (r *PortForwardRuleReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := ctrllog.FromContext(ctx).WithValues("portforwardrule", req.NamespacedName)
+
+	// Check if reconciliation is already in progress for this resource
+	resourceKey := fmt.Sprintf("%s/%s", req.Namespace, req.Name)
+	if _, exists := r.activeReconciliations.LoadOrStore(resourceKey, true); exists {
+		logger.Info("Reconciliation already in progress, skipping", "resourceKey", resourceKey)
+		return ctrl.Result{RequeueAfter: time.Second * 5}, nil
+	}
+	defer r.activeReconciliations.Delete(resourceKey)
 
 	rule := &v1alpha1.PortForwardRule{}
 	if err := r.Get(ctx, req.NamespacedName, rule); err != nil {
@@ -65,19 +72,32 @@ func (r *PortForwardRuleReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 
 	if err := r.validateRule(ctx, rule); err != nil {
 		logger.Error(err, "Rule validation failed")
-		r.updateRuleStatus(ctx, rule, v1alpha1.PhaseFailed, err.Error())
+		r.updateRuleStatusWithRetry(ctx, rule, v1alpha1.PhaseFailed, err.Error())
 		return ctrl.Result{}, err
 	}
 
 	if err := r.reconcilePortForwardRule(ctx, rule); err != nil {
-		logger.Error(err, "Failed to reconcile port forwarding rule")
-		r.updateRuleStatus(ctx, rule, v1alpha1.PhaseFailed, err.Error())
-		return ctrl.Result{}, err
+		// Check for special overlap error that needs backoff
+		if err.Error() == "PortForwardOverlaps: requires backoff" {
+			logger.Info("Port forward overlap detected, applying exponential backoff",
+				"rule", rule.Name,
+				"namespace", rule.Namespace)
+			r.updateRuleStatusWithRetry(ctx, rule, v1alpha1.PhaseFailed, "Port forward overlap conflict")
+			return ctrl.Result{RequeueAfter: time.Minute * 5}, nil
+		} else {
+			// For any other error, apply a shorter backoff to prevent spam
+			logger.Info("Port forward reconciliation failed, applying backoff",
+				"rule", rule.Name,
+				"namespace", rule.Namespace,
+				"error", err.Error())
+			r.updateRuleStatusWithRetry(ctx, rule, v1alpha1.PhaseFailed, err.Error())
+			return ctrl.Result{RequeueAfter: time.Minute * 1}, nil
+		}
 	}
 
-	r.updateRuleStatus(ctx, rule, v1alpha1.PhaseActive, "")
+	r.updateRuleStatusWithRetry(ctx, rule, v1alpha1.PhaseActive, "")
 
-	logger.Info("Successfully reconciled PortForwardRule")
+	logger.V(1).Info("Successfully reconciled PortForwardRule")
 	return ctrl.Result{RequeueAfter: time.Minute * 5}, nil
 }
 
@@ -110,6 +130,9 @@ func (r *PortForwardRuleReconciler) validateRule(ctx context.Context, rule *v1al
 func (r *PortForwardRuleReconciler) reconcilePortForwardRule(ctx context.Context, rule *v1alpha1.PortForwardRule) error {
 	logger := ctrllog.FromContext(ctx)
 
+	// Create special error type for overlap scenario
+	ErrPortForwardOverlaps := fmt.Errorf("PortForwardOverlaps: requires backoff")
+
 	var destIP string
 	var destPort int
 	var err error
@@ -133,7 +156,7 @@ func (r *PortForwardRuleReconciler) reconcilePortForwardRule(ctx context.Context
 	}
 
 	routerRule := routers.PortConfig{
-		Name:      fmt.Sprintf("portforward-%s-%s-%d", rule.Namespace, rule.Name, rule.Spec.ExternalPort),
+		Name:      fmt.Sprintf("%s/%s:%d", rule.Namespace, rule.Name, rule.Spec.ExternalPort),
 		Enabled:   rule.Spec.Enabled,
 		Interface: rule.Spec.Interface,
 		DstPort:   rule.Spec.ExternalPort, // External port (what users connect to)
@@ -143,22 +166,81 @@ func (r *PortForwardRuleReconciler) reconcilePortForwardRule(ctx context.Context
 		Protocol:  rule.Spec.Protocol,
 	}
 
+	// Property-based discovery: find rule by port+protocol (annotation controller pattern)
 	existingRule, exists, err := r.Router.CheckPort(ctx, rule.Spec.ExternalPort, rule.Spec.Protocol)
 	if err != nil {
 		return fmt.Errorf("failed to check existing router rule: %w", err)
 	}
 
 	if exists && existingRule != nil {
-		if err := r.Router.UpdatePort(ctx, rule.Spec.ExternalPort, routerRule); err != nil {
-			return fmt.Errorf("failed to update router rule: %w", err)
+		// Adopt annotation controller's aggressive ownership strategy
+		needsOwnership := false
+		reason := ""
+
+		// Check if we need to take ownership or update existing rule
+		if !strings.HasPrefix(existingRule.Name, fmt.Sprintf("%s/%s:", rule.Namespace, rule.Name)) {
+			needsOwnership = true
+			reason = "ownership_takeover"
+		} else if existingRule.Name != routerRule.Name {
+			needsOwnership = true
+			reason = "name_mismatch"
+		} else if existingRule.Fwd != routerRule.DstIP {
+			needsOwnership = true
+			reason = "ip_mismatch"
+		} else if existingRule.Enabled != routerRule.Enabled {
+			needsOwnership = true
+			reason = "enabled_mismatch"
+		}
+
+		if needsOwnership {
+			logger.Info("Taking ownership of existing port forward rule",
+				"port", rule.Spec.ExternalPort,
+				"protocol", rule.Spec.Protocol,
+				"existing_rule_id", existingRule.ID,
+				"existing_rule_name", existingRule.Name,
+				"new_rule_name", routerRule.Name,
+				"reason", reason)
+
+			// Update the rule to take ownership and fix configuration
+			if err := r.Router.UpdatePort(ctx, rule.Spec.ExternalPort, routerRule); err != nil {
+				if strings.Contains(err.Error(), "PortForwardOverlaps") {
+					logger.Info("Port forward overlap detected during ownership takeover, applying exponential backoff",
+						"port", rule.Spec.ExternalPort,
+						"protocol", rule.Spec.Protocol,
+						"rule_name", routerRule.Name)
+					return ErrPortForwardOverlaps
+				}
+				return fmt.Errorf("failed to update router rule during ownership takeover: %w", err)
+			}
+			logger.Info("Successfully took ownership of port forward rule",
+				"port", rule.Spec.ExternalPort,
+				"protocol", rule.Spec.Protocol,
+				"rule_id", existingRule.ID)
+		} else {
+			logger.V(1).Info("Port forward rule exists and matches desired configuration",
+				"port", rule.Spec.ExternalPort,
+				"protocol", rule.Spec.Protocol,
+				"rule_id", existingRule.ID)
 		}
 	} else {
+		// No existing rule found - create new one
 		if err := r.Router.AddPort(ctx, routerRule); err != nil {
+			if strings.Contains(err.Error(), "PortForwardOverlaps") {
+				logger.Info("Port forward overlap detected during creation, applying exponential backoff",
+					"port", rule.Spec.ExternalPort,
+					"protocol", rule.Spec.Protocol,
+					"rule_name", routerRule.Name)
+				return ErrPortForwardOverlaps
+			}
 			return fmt.Errorf("failed to create router rule: %w", err)
 		}
+		logger.Info("Successfully created new port forward rule",
+			"port", rule.Spec.ExternalPort,
+			"protocol", rule.Spec.Protocol,
+			"rule_name", routerRule.Name)
 	}
 
-	ruleID := fmt.Sprintf("port-%d", rule.Spec.ExternalPort)
+	ruleID := fmt.Sprintf("%s/%s:%d", rule.Namespace, rule.Name, rule.Spec.ExternalPort)
 
 	now := metav1.Now()
 	rule.Status.RouterRuleID = ruleID
@@ -182,7 +264,7 @@ func (r *PortForwardRuleReconciler) reconcilePortForwardRule(ctx context.Context
 	r.Recorder.Event(rule, corev1.EventTypeNormal, "RuleApplied",
 		fmt.Sprintf("Port forwarding rule applied to router (ID: %s)", ruleID))
 
-	logger.Info("Successfully applied port forwarding rule", "routerRuleID", ruleID)
+	logger.V(1).Info("Successfully applied port forwarding rule", "routerRuleID", ruleID)
 	return nil
 }
 
@@ -228,67 +310,128 @@ func (r *PortForwardRuleReconciler) getServiceDestination(ctx context.Context, r
 	return destIP, destPort, nil
 }
 
-// updateRuleStatus updates the status of the PortForwardRule
-func (r *PortForwardRuleReconciler) updateRuleStatus(ctx context.Context, rule *v1alpha1.PortForwardRule, phase, errorMsg string) {
-	rule.Status.Phase = phase
+// updateRuleStatusWithRetry updates status of PortForwardRule with retry logic for conflicts
+func (r *PortForwardRuleReconciler) updateRuleStatusWithRetry(ctx context.Context, rule *v1alpha1.PortForwardRule, phase, errorMsg string) {
+	logger := ctrllog.FromContext(ctx)
 
-	conditionType := "RuleReady"
-	status := metav1.ConditionFalse
-	reason := "Failed"
-	message := errorMsg
+	// Use the existing updateRuleStatus logic but with retry
+	backoffDuration := 100 * time.Millisecond
+	maxAttempts := 3
 
-	if phase == v1alpha1.PhaseActive {
-		status = metav1.ConditionTrue
-		reason = "RuleApplied"
-		message = "Port forwarding rule successfully applied"
-	}
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		if attempt > 0 {
+			logger.Info("Retrying status update attempt",
+				"attempt", attempt+1,
+				"maxAttempts", maxAttempts,
+				"backoff", backoffDuration.String(),
+				"rule", rule.Name,
+				"namespace", rule.Namespace)
+			time.Sleep(backoffDuration)
+			backoffDuration *= 2 // Exponential backoff
 
-	// Update or add condition
-	conditions := rule.Status.Conditions
-	for i, condition := range conditions {
-		if condition.Type == conditionType {
-			conditions[i].Status = status
-			conditions[i].Reason = reason
-			conditions[i].Message = message
-			conditions[i].LastTransitionTime = metav1.Now()
-			break
+			// Refresh resource to get latest version
+			if getErr := r.Get(ctx, client.ObjectKey{Namespace: rule.Namespace, Name: rule.Name}, rule); getErr != nil {
+				logger.Error(getErr, "Failed to refresh resource for retry",
+					"attempt", attempt+1,
+					"rule", rule.Name,
+					"namespace", rule.Namespace)
+				return // Can't retry without refreshed resource
+			}
+		}
+
+		// Apply status updates (this will modify the rule in-place)
+		rule.Status.Phase = phase
+
+		conditionType := "RuleReady"
+		status := metav1.ConditionFalse
+		reason := "Failed"
+		message := errorMsg
+
+		if phase == v1alpha1.PhaseActive {
+			status = metav1.ConditionTrue
+			reason = "RuleApplied"
+			message = "Port forwarding rule successfully applied"
+		}
+
+		// Update or add condition
+		conditions := rule.Status.Conditions
+		updatedConditions := make([]metav1.Condition, len(conditions))
+		copy(updatedConditions, conditions)
+
+		conditionFound := false
+		for i, condition := range updatedConditions {
+			if condition.Type == conditionType {
+				updatedConditions[i].Status = status
+				updatedConditions[i].Reason = reason
+				updatedConditions[i].Message = message
+				updatedConditions[i].LastTransitionTime = metav1.Now()
+				conditionFound = true
+				break
+			}
+		}
+
+		if !conditionFound {
+			updatedConditions = append(updatedConditions, metav1.Condition{
+				Type:               conditionType,
+				Status:             status,
+				LastTransitionTime: metav1.Now(),
+				Reason:             reason,
+				Message:            message,
+			})
+		}
+
+		rule.Status.Conditions = updatedConditions
+
+		// Update error info if failed
+		if phase == v1alpha1.PhaseFailed {
+			var retryCount int
+			if rule.Status.ErrorInfo != nil {
+				retryCount = rule.Status.ErrorInfo.RetryCount + 1
+			}
+			rule.Status.ErrorInfo = &v1alpha1.ErrorInfo{
+				Code:            "ReconciliationError",
+				Message:         errorMsg,
+				LastFailureTime: &metav1.Time{Time: time.Now()},
+				RetryCount:      retryCount,
+			}
+		} else {
+			rule.Status.ErrorInfo = nil
+		}
+
+		// Try to update status
+		err := r.Status().Update(ctx, rule)
+		if err == nil {
+			logger.V(1).Info("Successfully updated rule status",
+				"attempt", attempt+1,
+				"phase", phase,
+				"rule", rule.Name,
+				"namespace", rule.Namespace)
+			return // Success
+		}
+
+		if errors.IsConflict(err) {
+			logger.Info("Status update conflict detected, will retry",
+				"attempt", attempt+1,
+				"error", err.Error(),
+				"rule", rule.Name,
+				"namespace", rule.Namespace)
+			// Continue to next attempt with refreshed resource
+			continue
+		} else {
+			// Non-conflict error, don't retry
+			logger.Error(err, "Failed to update rule status (non-conflict error)",
+				"attempt", attempt+1,
+				"rule", rule.Name,
+				"namespace", rule.Namespace)
+			return
 		}
 	}
 
-	// If condition not found, add it
-	found := false
-	for _, condition := range conditions {
-		if condition.Type == conditionType {
-			found = true
-			break
-		}
-	}
-
-	if !found {
-		rule.Status.Conditions = append(conditions, metav1.Condition{
-			Type:               conditionType,
-			Status:             status,
-			LastTransitionTime: metav1.Now(),
-			Reason:             reason,
-			Message:            message,
-		})
-	}
-
-	// Update error info if failed
-	if phase == v1alpha1.PhaseFailed {
-		rule.Status.ErrorInfo = &v1alpha1.ErrorInfo{
-			Code:            "ReconciliationError",
-			Message:         errorMsg,
-			LastFailureTime: &metav1.Time{Time: time.Now()},
-			RetryCount:      rule.Status.ErrorInfo.RetryCount + 1,
-		}
-	} else {
-		rule.Status.ErrorInfo = nil
-	}
-
-	if err := r.Status().Update(ctx, rule); err != nil {
-		ctrllog.FromContext(ctx).Error(err, "Failed to update rule status")
-	}
+	// Max retries exceeded
+	logger.Error(nil, "Failed to update status after maximum retries",
+		"maxRetries", maxAttempts,
+		"rule", rule.Name,
+		"namespace", rule.Namespace)
 }
 
 // handleRuleDeletion handles the deletion of a PortForwardRule
