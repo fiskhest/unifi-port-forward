@@ -181,7 +181,7 @@ func (r *PeriodicReconciler) performFullReconciliation(ctx context.Context, star
 	}
 
 	duration := time.Since(startTime)
-	logger.Info("Periodic reconciliation completed",
+	logger.V(1).Info("Periodic reconciliation completed",
 		"total_services", len(managedServices),
 		"services_with_drift", servicesWithDrift,
 		"corrected_rules", correctedRules,

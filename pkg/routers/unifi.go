@@ -114,7 +114,7 @@ func (router *UnifiRouter) CheckPort(ctx context.Context, port int, protocol str
 		}
 	}
 
-	logger.Info("Port forward rule not found",
+	logger.V(1).Info("Port forward rule not found",
 		"searched_port", port,
 		"protocol", protocol,
 		"total_rules_checked", len(portforwards),
