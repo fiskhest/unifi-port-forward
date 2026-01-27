@@ -11,7 +11,11 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/event"
+
 	ctrl "sigs.k8s.io/controller-runtime"
+
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
 
 // TestReconcile_RealServiceCreation tests actual Reconcile method
@@ -1938,4 +1942,218 @@ func TestDeletionDetection_FullFlow(t *testing.T) {
 	}
 
 	t.Log("✅ Deletion detection full flow test passed - UPDATE event triggered cleanup correctly")
+}
+
+func TestFinalizerDeletion_RealScenario(t *testing.T) {
+	// Create test environment
+	env := NewControllerTestEnv(t)
+	defer env.Cleanup()
+
+	// Create a service with finalizer that's marked for deletion
+	service := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "test-service",
+			Namespace:         "default",
+			DeletionTimestamp: &metav1.Time{Time: time.Now()},
+			Finalizers:        []string{config.FinalizerLabel},
+		},
+	}
+
+	// Add the service to the fake client
+	ctx := context.Background()
+	err := env.FakeClient.Create(ctx, service)
+	if err != nil {
+		t.Fatalf("Failed to create test service: %v", err)
+	}
+
+	// Test the finalizer cleanup directly
+	result, err := env.Controller.handleFinalizerCleanup(ctx, service)
+
+	// Verify no error was returned
+	if err != nil {
+		t.Fatalf("Expected no error, got: %v", err)
+	}
+
+	// Verify we're not requeuing (finalizer should be removed)
+	if result.Requeue || result.RequeueAfter > 0 {
+		t.Fatalf("Expected no requeue, got: Requeue=%v, RequeueAfter=%v", result.Requeue, result.RequeueAfter)
+	}
+
+	// Get the updated service to check finalizer was removed
+	updatedService := &corev1.Service{}
+	err = env.FakeClient.Get(ctx, types.NamespacedName{Name: "test-service", Namespace: "default"}, updatedService)
+	if err != nil {
+		t.Fatalf("Failed to get updated service: %v", err)
+	}
+
+	// CRITICAL: Verify finalizer was removed
+	if controllerutil.ContainsFinalizer(updatedService, config.FinalizerLabel) {
+		t.Fatal("❌ FINALIZER WAS NOT REMOVED - this would cause kubectl delete to hang forever!")
+	}
+
+	t.Log("✅ Finalizer successfully removed during deletion - kubectl delete will not hang!")
+}
+
+func TestFinalizerDeletion_WithCleanupErrors(t *testing.T) {
+	// Create test environment
+	env := NewControllerTestEnv(t)
+	defer env.Cleanup()
+
+	// Configure mock router to fail cleanup
+	env.MockRouter.SetSimulatedFailure("RemovePort", true)
+
+	// Create a service with finalizer that's marked for deletion
+	service := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "test-service",
+			Namespace:         "default",
+			DeletionTimestamp: &metav1.Time{Time: time.Now()},
+			Finalizers:        []string{config.FinalizerLabel},
+		},
+	}
+
+	// Add the service to the fake client
+	ctx := context.Background()
+	err := env.FakeClient.Create(ctx, service)
+	if err != nil {
+		t.Fatalf("Failed to create test service: %v", err)
+	}
+
+	// Test the finalizer cleanup with cleanup errors
+	result, err := env.Controller.handleFinalizerCleanup(ctx, service)
+
+	// Verify no error was returned (even though cleanup failed)
+	if err != nil {
+		t.Fatalf("Expected no error despite cleanup failure, got: %v", err)
+	}
+
+	// Verify we're not requeuing (finalizer should still be removed)
+	if result.Requeue || result.RequeueAfter > 0 {
+		t.Fatalf("Expected no requeue despite cleanup failure, got: Requeue=%v, RequeueAfter=%v", result.Requeue, result.RequeueAfter)
+	}
+
+	// Get the updated service to check finalizer was removed
+	updatedService := &corev1.Service{}
+	err = env.FakeClient.Get(ctx, types.NamespacedName{Name: "test-service", Namespace: "default"}, updatedService)
+	if err != nil {
+		t.Fatalf("Failed to get updated service: %v", err)
+	}
+
+	// CRITICAL: Verify finalizer was removed even with cleanup errors
+	if controllerutil.ContainsFinalizer(updatedService, config.FinalizerLabel) {
+		t.Fatal("❌ FINALIZER WAS NOT REMOVED despite cleanup errors - this would cause kubectl delete to hang forever!")
+	}
+
+	t.Log("✅ Finalizer successfully removed even with cleanup errors - kubectl delete will not hang!")
+}
+
+// TestFinalizer_SimpleStaleObject tests the core for stale service objects
+func TestFinalizer_SimpleStaleObject(t *testing.T) {
+	predicate := ServiceChangePredicate{}
+
+	// Test case 1: Service with finalizer should be processed (existing behavior)
+	serviceWithFinalizer := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       "test-service",
+			Namespace:  "default",
+			Finalizers: []string{config.FinalizerLabel},
+		},
+	}
+	deleteEvent := event.DeleteEvent{
+		Object: serviceWithFinalizer,
+	}
+	if !predicate.Delete(deleteEvent) {
+		t.Error("Expected service with finalizer to be processed for deletion")
+	}
+
+	// Test case 2: Service with annotation but no finalizer should be processed (new behavior - orphaned cleanup)
+	serviceWithAnnotation := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-service",
+			Namespace: "default",
+			Annotations: map[string]string{
+				config.FilterAnnotation: "8080:8081:tcp",
+			},
+		},
+	}
+	deleteEvent = event.DeleteEvent{
+		Object: serviceWithAnnotation,
+	}
+	if !predicate.Delete(deleteEvent) {
+		t.Error("Expected service with annotation but no finalizer to be processed for orphaned cleanup")
+	}
+
+	// Test case 3: Service with neither should not be processed
+	serviceWithNeither := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-service",
+			Namespace: "default",
+		},
+	}
+	deleteEvent = event.DeleteEvent{
+		Object: serviceWithNeither,
+	}
+	if predicate.Delete(deleteEvent) {
+		t.Error("Expected service with neither finalizer nor annotation to NOT be processed")
+	}
+
+	t.Log("✅ Finalizer fix predicate test passed")
+}
+
+// TestReconcile_SingleRuleYaml_PortRemoval tests the exact user scenario:
+// 1. Apply single-rule.yaml equivalent
+// 2. Edit away https port from web-service
+// 3. Verify no rollback validation failures
+func TestReconcile_SingleRuleYaml_PortRemoval(t *testing.T) {
+	env := NewControllerTestEnv(t)
+	defer env.Cleanup()
+
+	// Step 1: Create web-service with both ports (from single-rule.yaml)
+	webService := env.CreateTestService("default", "web-service",
+		map[string]string{config.FilterAnnotation: "89:http,91:https"},
+		[]corev1.ServicePort{
+			{Name: "http", Port: 8080, Protocol: corev1.ProtocolTCP},
+			{Name: "https", Port: 8181, Protocol: corev1.ProtocolTCP},
+		},
+		"192.168.72.6")
+
+	// Create the service in the fake k8s client
+	if err := env.CreateService(context.Background(), webService); err != nil {
+		t.Fatalf("Failed to create web-service: %v", err)
+	}
+
+	// Reconcile initial service - should create both port 89 and 91 rules
+	_, err := env.ReconcileServiceWithFinalizer(t, webService)
+	if err != nil {
+		t.Errorf("Failed to reconcile initial web-service: %v", err)
+	}
+
+	// Verify both rules are created
+	env.AssertRuleExistsByName(t, "default/web-service:http")
+	env.AssertRuleExistsByName(t, "default/web-service:https")
+
+	// Step 2: Edit away https port from web-service (the user's scenario)
+	updatedWebService := webService.DeepCopy()
+	updatedWebService.Annotations = map[string]string{
+		config.FilterAnnotation: "89:http", // https port removed
+	}
+	updatedWebService.ResourceVersion = "2"
+
+	// Update the service in the "cluster"
+	if err := env.UpdateService(context.Background(), updatedWebService); err != nil {
+		t.Fatalf("Failed to update web-service: %v", err)
+	}
+
+	// This is the critical test - should succeed without rollback validation failures
+	// The DELETE operation for port 91 should use correct LoadBalancer IP (192.168.72.6)
+	_, err = env.ReconcileServiceWithFinalizer(t, updatedWebService)
+	if err != nil {
+		t.Errorf("UPDATE reconciliation failed (rollback validation issue): %v", err)
+	}
+
+	// Verify final state - only http rule should remain
+	env.AssertRuleExistsByName(t, "default/web-service:http")
+	env.AssertRuleDoesNotExistByName(t, "default/web-service:https")
+
+	t.Log("✅ Single-rule.yaml port removal test passed - no rollback validation errors")
 }

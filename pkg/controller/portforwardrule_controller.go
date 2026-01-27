@@ -446,7 +446,7 @@ func (r *PortForwardRuleReconciler) deleteRouterRuleByID(ctx context.Context, ru
 
 	if !exists {
 		// Rule doesn't exist on router - consider this success
-		logger.Info("Router rule not found during deletion, assuming already cleaned up",
+		logger.V(1).Info("Router rule not found during deletion, assuming already cleaned up",
 			"port", rule.Spec.ExternalPort,
 			"protocol", rule.Spec.Protocol,
 			"routerRuleID", rule.Status.RouterRuleID)
@@ -454,7 +454,7 @@ func (r *PortForwardRuleReconciler) deleteRouterRuleByID(ctx context.Context, ru
 	}
 
 	// Delete using the actual UniFi router rule ID
-	logger.Info("Deleting router rule by ID",
+	logger.V(1).Info("Deleting router rule by ID",
 		"routerRuleID", pf.ID,
 		"port", rule.Spec.ExternalPort,
 		"protocol", rule.Spec.Protocol)
