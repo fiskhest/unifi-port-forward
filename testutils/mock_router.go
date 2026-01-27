@@ -19,6 +19,10 @@ type MockRouter struct {
 	failCount         int
 	callCount         map[string]int
 	simulatedFailures map[string]bool
+
+	// DeletePortForwardByID tracking for tests
+	DeletePortForwardByIDCalled bool
+	LastDeletedRuleID           string
 }
 
 // NewMockRouter creates a new mock router
@@ -326,8 +330,8 @@ func (r *MockRouter) ShouldOperationFail(operation string) bool {
 
 // GetOperationCounts returns a copy of operation counts
 func (r *MockRouter) GetOperationCounts() map[string]int {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.callCount["GetOperationCounts"]++
 
 	result := make(map[string]int)
@@ -337,10 +341,68 @@ func (r *MockRouter) GetOperationCounts() map[string]int {
 	return result
 }
 
+// SetSimulatedDeleteFailure controls whether DeletePortForwardByID should fail
+func (r *MockRouter) SetSimulatedDeleteFailure(shouldFail bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.simulatedFailures == nil {
+		r.simulatedFailures = make(map[string]bool)
+	}
+	r.simulatedFailures["DeletePortForwardByID"] = shouldFail
+}
+
+// SetMockPortForward sets a specific port forward to be returned by CheckPort
+func (r *MockRouter) SetMockPortForward(pf *unifi.PortForward) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if pf == nil {
+		// Clear all existing port forwards
+		r.PortForwards = make([]unifi.PortForward, 0)
+		return
+	}
+
+	// Clear existing and add the specified one
+	r.PortForwards = []unifi.PortForward{*pf}
+}
+
+// DeletePortForwardByID implements routers.Router.DeletePortForwardByID
+func (r *MockRouter) DeletePortForwardByID(ctx context.Context, ruleID string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.callCount["DeletePortForwardByID"]++
+	r.DeletePortForwardByIDCalled = true
+	r.LastDeletedRuleID = ruleID
+
+	if r.shouldFail || r.ShouldOperationFail("DeletePortForwardByID") {
+		r.failCount++
+		return fmt.Errorf("simulated DeletePortForwardByID failure")
+	}
+
+	// Find and remove the rule by ID
+	for i, pf := range r.PortForwards {
+		if pf.ID == ruleID {
+			r.PortForwards = append(r.PortForwards[:i], r.PortForwards[i+1:]...)
+			return nil
+		}
+	}
+
+	return fmt.Errorf("port forward rule with ID %s not found", ruleID)
+}
+
+// Fields for testing DeletePortForwardByID
+type DeletePortForwardByIDTracker struct {
+	Called            bool
+	LastDeletedRuleID string
+	SimulatedFailure  bool
+}
+
 // ResetOperationCounts resets all operation counters
 func (r *MockRouter) ResetOperationCounts() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.callCount = make(map[string]int)
 	r.simulatedFailures = make(map[string]bool)
+	r.DeletePortForwardByIDCalled = false
+	r.LastDeletedRuleID = ""
 }

@@ -434,29 +434,66 @@ func (r *PortForwardRuleReconciler) updateRuleStatusWithRetry(ctx context.Contex
 		"namespace", rule.Namespace)
 }
 
+// deleteRouterRuleByID deletes router rule using proper identification
+func (r *PortForwardRuleReconciler) deleteRouterRuleByID(ctx context.Context, rule *v1alpha1.PortForwardRule) error {
+	logger := ctrllog.FromContext(ctx)
+
+	// Use CheckPort to find the actual UniFi router rule ID
+	pf, exists, err := r.Router.CheckPort(ctx, rule.Spec.ExternalPort, rule.Spec.Protocol)
+	if err != nil {
+		return fmt.Errorf("failed to find router rule for deletion: %w", err)
+	}
+
+	if !exists {
+		// Rule doesn't exist on router - consider this success
+		logger.Info("Router rule not found during deletion, assuming already cleaned up",
+			"port", rule.Spec.ExternalPort,
+			"protocol", rule.Spec.Protocol,
+			"routerRuleID", rule.Status.RouterRuleID)
+		return nil
+	}
+
+	// Delete using the actual UniFi router rule ID
+	logger.Info("Deleting router rule by ID",
+		"routerRuleID", pf.ID,
+		"port", rule.Spec.ExternalPort,
+		"protocol", rule.Spec.Protocol)
+
+	return r.Router.DeletePortForwardByID(ctx, pf.ID)
+}
+
 // handleRuleDeletion handles the deletion of a PortForwardRule
 func (r *PortForwardRuleReconciler) handleRuleDeletion(ctx context.Context, namespacedName client.ObjectKey) (ctrl.Result, error) {
 	logger := ctrllog.FromContext(ctx)
 
-	// If we have a router rule ID, try to delete it from router
+	// Try to get the rule to extract router deletion information
 	rule := &v1alpha1.PortForwardRule{}
-	if err := r.Get(ctx, namespacedName, rule); err == nil {
+	err := r.Get(ctx, namespacedName, rule)
+
+	if err == nil {
+		// Rule still exists - handle router deletion and finalizer removal
 		if rule.Status.RouterRuleID != "" {
-			// Extract port number from rule ID for router deletion
-			routerRule := routers.PortConfig{
-				DstPort: rule.Spec.ExternalPort,
+			if delErr := r.deleteRouterRuleByID(ctx, rule); delErr != nil {
+				logger.Error(delErr, "Failed to delete router rule", "routerRuleID", rule.Status.RouterRuleID)
+				// CRITICAL: Don't remove finalizer if router deletion failed
+				return ctrl.Result{}, fmt.Errorf("router rule deletion failed: %w", delErr)
 			}
-			if err := r.Router.RemovePort(ctx, routerRule); err != nil {
-				logger.Error(err, "Failed to delete router rule", "routerRuleID", rule.Status.RouterRuleID)
-				// no `return err` here so finalizer can be removed
-			}
+			logger.Info("Successfully deleted router rule during rule deletion", "routerRuleID", rule.Status.RouterRuleID)
 		}
 
-		controllerutil.RemoveFinalizer(rule, "unifi-port-forward.fiskhe.st/router-rule-protection")
-		if err := r.Update(ctx, rule); err != nil {
-			logger.Error(err, "Failed to remove finalizer")
-			return ctrl.Result{}, err
+		// Remove finalizer only after router rule is successfully deleted
+		controllerutil.RemoveFinalizer(rule, config.FinalizerLabel)
+		if updErr := r.Update(ctx, rule); updErr != nil {
+			logger.Error(updErr, "Failed to remove finalizer")
+			return ctrl.Result{}, updErr
 		}
+	} else if errors.IsNotFound(err) {
+		// Rule is already deleted from K8s - this can happen if deletion was already processed
+		logger.V(1).Info("PortForwardRule not found during deletion handling, likely already processed")
+	} else {
+		// Some other error occurred
+		logger.Error(err, "Failed to get PortForwardRule during deletion")
+		return ctrl.Result{}, err
 	}
 
 	logger.V(1).Info("Successfully handled PortForwardRule deletion")

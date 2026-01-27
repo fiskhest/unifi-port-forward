@@ -364,6 +364,10 @@ func (m *MockRouter) RemovePort(ctx context.Context, config routers.PortConfig) 
 	return nil
 }
 
+func (m *MockRouter) DeletePortForwardByID(ctx context.Context, ruleID string) error {
+	return nil
+}
+
 func TestSyncPortTrackingWithRouter(t *testing.T) {
 	// Reset tracking before test
 	ClearPortConflictTracking()
