@@ -38,7 +38,7 @@ The controller prevents external port conflicts across different services. If tw
 
 ## CLI Commands
 
-The `unifi-port-forward` provides four commands:
+The `unifi-port-forward` provides two commands:
 
 ### controller (default)
 Run Kubernetes controller for automatic port forwarding:
@@ -48,13 +48,5 @@ Run Kubernetes controller for automatic port forwarding:
 ./unifi-port-forward
 ```
 
-### debug
-Monitor Kubernetes services for debugging purposes:
-
 ### cleaner
 For detailed cleaner documentation, see [cmd/cleaner/README.md](cmd/cleaner/README.md).
-
-### service-debugger
-
-For detailed service-debugger documentation, see [cmd/service-debugger/README.md](cmd/service-debugger/README.md).
-<We can probably delete this section>?

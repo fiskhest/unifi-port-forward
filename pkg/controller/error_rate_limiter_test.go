@@ -444,7 +444,7 @@ func TestErrorRateLimiter_FilterErrorForReconcile(t *testing.T) {
 	}
 }
 
-func TestErrorRateLimiter_FilterErrorForReconcile_BackoffDuration(t *testing.T) {
+func TestErrorRateLimiter_FilterErrorForReconcile_Backoff(t *testing.T) {
 	erl := NewErrorRateLimiter()
 	defer erl.Stop()
 
@@ -489,7 +489,7 @@ func TestErrorRateLimiter_FilterErrorForReconcile_BackoffDuration(t *testing.T) 
 	}
 }
 
-func TestErrorRateLimiter_FilterErrorForReconcile_NewErrorType(t *testing.T) {
+func TestErrorRateLimiter_FilterErrorForReconcile_NewError(t *testing.T) {
 	erl := NewErrorRateLimiter()
 	defer erl.Stop()
 

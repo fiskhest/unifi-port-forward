@@ -1,27 +1,23 @@
 # Docker Build Configuration
 
-This repository uses Docker Buildx with bake files for optimized container builds.
+This repository uses standard Docker builds with optimized multi-stage Dockerfiles.
 
 ## Quick Start
 
 ### Build Locally
 ```bash
-# Build all targets (default: controller)
-docker buildx bake
+# Build and push to registry (recommended)
+just build
 
-# Build only the controller
-docker buildx bake controller
+# Or use Docker directly
+docker build --push -t johrad/unifi-port-forward .
 
 # Build with custom tag
-docker buildx bake --set controller.tags=johrad/unifi-port-forward:v1.0.0
-
-# Build and push to registry
-docker buildx bake --push
+docker build --push -t your-username/unifi-port-forward:v1.0.0 .
 ```
 
 ### Prerequisites
-- Docker with Buildx enabled
-- `docker buildx create --use` (if not using default builder)
+- Docker (any recent version with multi-stage build support)
 
 ## Build Targets
 
@@ -31,11 +27,11 @@ docker buildx bake --push
 
 ## Build Features
 
-- **Multi-stage**: Efficient layer caching
+- **Multi-stage**: Efficient layer caching and smaller final image
 - **Distroless**: Minimal runtime image for security
 - **Optimized**: Stripped binaries for smaller size
 - **Non-root**: Runs as user 65532:65532
-- **Caching**: BuildKit mounts for faster rebuilds
+- **Automated**: Push to registry after successful build (TODO: Not yet)
 
 ## Environment Variables
 

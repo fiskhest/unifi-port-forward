@@ -200,6 +200,11 @@ func (r *PortForwardRule) ValidateCrossNamespacePortConflict(ctx context.Context
 	var allErrs field.ErrorList
 	specPath := field.NewPath("spec")
 
+	// If client is nil, we can't validate conflicts
+	if client == nil {
+		return allErrs
+	}
+
 	// List all PortForwardRules in all namespaces
 	var ruleList PortForwardRuleList
 	if err := client.List(ctx, &ruleList); err != nil {
@@ -255,7 +260,7 @@ func (r *PortForwardRule) ValidateServiceExists(ctx context.Context, client clie
 	var allErrs field.ErrorList
 	specPath := field.NewPath("spec")
 
-	if r.Spec.ServiceRef == nil {
+	if r.Spec.ServiceRef == nil || client == nil {
 		return allErrs
 	}
 

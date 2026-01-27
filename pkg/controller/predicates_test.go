@@ -12,7 +12,7 @@ import (
 )
 
 // TestServiceChangePredicate_Delete tests the delete predicate specifically
-func TestServiceChangePredicate_Delete(t *testing.T) {
+func TestPredicate_Delete(t *testing.T) {
 	tests := []struct {
 		name              string
 		hasFinalizer      bool
@@ -85,7 +85,7 @@ func TestServiceChangePredicate_Delete(t *testing.T) {
 }
 
 // TestServiceChangePredicate_Delete_NonFinalized tests that services without finalizers but with annotations are processed (orphaned cleanup)
-func TestServiceChangePredicate_Delete_NonFinalized(t *testing.T) {
+func TestPredicate_DeleteNonFinalized(t *testing.T) {
 	predicate := ServiceChangePredicate{}
 
 	// Create service without finalizer but with annotation
@@ -109,7 +109,7 @@ func TestServiceChangePredicate_Delete_NonFinalized(t *testing.T) {
 }
 
 // TestServiceChangePredicate_Delete_PrioritizedFiltering tests that finalizer filtering is prioritized
-func TestServiceChangePredicate_Delete_PrioritizedFiltering(t *testing.T) {
+func TestPredicate_DeletePriority(t *testing.T) {
 	tests := []struct {
 		name              string
 		hasFinalizer      bool
@@ -184,7 +184,7 @@ func TestServiceChangePredicate_Delete_PrioritizedFiltering(t *testing.T) {
 }
 
 // TestServiceChangePredicate_Update_WithDeletion tests UPDATE predicate with deletion events
-func TestServiceChangePredicate_Update_WithDeletion(t *testing.T) {
+func TestPredicate_UpdateWithDeletion(t *testing.T) {
 	tests := []struct {
 		name               string
 		oldService         *corev1.Service

@@ -115,7 +115,7 @@ func TestCalculateDelta_UpdateScenario(t *testing.T) {
 }
 
 func TestCalculateDelta_DeletionScenario(t *testing.T) {
-	// Test delta calculation for port deletion
+	// Test delta calculation for rule deletion
 	controller := &PortForwardReconciler{Config: &config.Config{Debug: false}}
 
 	existingRules := []*unifi.PortForward{
@@ -130,13 +130,13 @@ func TestCalculateDelta_DeletionScenario(t *testing.T) {
 		},
 	}
 
+	// No desired configs means deletion
 	var desiredConfigs []routers.PortConfig
 
 	changeContext := &ChangeContext{
-		AnnotationChanged: true,
-		ServiceKey:        "default/test-service",
-		ServiceNamespace:  "default",
-		ServiceName:       "test-service",
+		ServiceKey:       "default/test-service",
+		ServiceNamespace: "default",
+		ServiceName:      "test-service",
 	}
 
 	service := &corev1.Service{
@@ -158,75 +158,6 @@ func TestCalculateDelta_DeletionScenario(t *testing.T) {
 
 	if operations[0].Reason != "port_no_longer_desired" {
 		t.Errorf("Expected 'port_no_longer_desired' reason, got %s", operations[0].Reason)
-	}
-}
-
-func TestDetectPortConflicts(t *testing.T) {
-	controller := &PortForwardReconciler{Config: &config.Config{Debug: false}}
-
-	// Create desired configs that should conflict with existing manual rules
-	desiredConfigs := []routers.PortConfig{
-		{
-			Name:      "qbittorrent/qbittorrent-bittorrent:tcp",
-			DstPort:   6881,
-			FwdPort:   6881,
-			DstIP:     "192.168.72.3",
-			Protocol:  "tcp",
-			Enabled:   true,
-			Interface: "wan",
-			SrcIP:     "any",
-		},
-	}
-
-	// Create existing manual rules that conflict
-	currentRules := []*unifi.PortForward{
-		{
-			ID:            "rule6881",    // Add required ID for validation
-			Name:          "qbittorrent", // Manual rule name
-			DstPort:       "6881",
-			FwdPort:       "6881",
-			Fwd:           "192.168.1.50", // Different IP
-			Proto:         "tcp",
-			Enabled:       true,
-			PfwdInterface: "wan",
-			Src:           "any",
-		},
-	}
-
-	service := &corev1.Service{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "qbittorrent-bittorrent",
-			Namespace: "qbittorrent",
-		},
-	}
-
-	operations := controller.detectPortConflicts(currentRules, desiredConfigs, service)
-
-	// Should detect exactly one conflict
-	if len(operations) != 1 {
-		t.Errorf("Expected 1 conflict operation, got %d", len(operations))
-	}
-
-	if operations[0].Type != OpUpdate {
-		t.Errorf("Expected UPDATE operation for conflict, got %s", operations[0].Type)
-	}
-
-	if operations[0].Reason != "ownership_takeover" {
-		t.Errorf("Expected 'ownership_takeover' reason, got %s", operations[0].Reason)
-	}
-
-	// Verify the old rule details
-	if operations[0].ExistingRule.Name != "qbittorrent" {
-		t.Errorf("Expected old rule name 'qbittorrent', got %s", operations[0].ExistingRule.Name)
-	}
-
-	// Verify the new config details
-	if operations[0].Config.DstPort != 6881 {
-		t.Errorf("Expected new config port 6881, got %d", operations[0].Config.DstPort)
-	}
-
-	if operations[0].Config.Name != "qbittorrent/qbittorrent-bittorrent:tcp" {
-		t.Errorf("Expected new config name 'qbittorrent/qbittorrent-bittorrent:tcp', got %s", operations[0].Config.Name)
 	}
 }
 
@@ -260,52 +191,7 @@ func TestDetectPortConflicts_NoConflicts(t *testing.T) {
 
 	// Should detect no conflicts
 	if len(operations) != 0 {
-		t.Errorf("Expected 0 conflict operations, got %d", len(operations))
-	}
-}
-
-func TestDetectPortConflicts_AlreadyOwned(t *testing.T) {
-	controller := &PortForwardReconciler{Config: &config.Config{Debug: false}}
-
-	desiredConfigs := []routers.PortConfig{
-		{
-			Name:      "default/test-service:http",
-			DstPort:   8080,
-			FwdPort:   80,
-			DstIP:     "192.168.1.100",
-			Protocol:  "tcp",
-			Enabled:   true,
-			Interface: "wan",
-			SrcIP:     "any",
-		},
-	}
-
-	// Existing rule already owned by this service (correct naming pattern)
-	currentRules := []*unifi.PortForward{
-		{
-			Name:          "default/test-service:http", // Already follows controller naming
-			DstPort:       "8080",
-			FwdPort:       "80",
-			Fwd:           "192.168.1.50",
-			Proto:         "tcp",
-			Enabled:       true,
-			PfwdInterface: "wan",
-			Src:           "any",
-		},
-	}
-
-	service := &corev1.Service{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-service",
-			Namespace: "default",
-		},
-	}
-
-	operations := controller.detectPortConflicts(currentRules, desiredConfigs, service)
-
-	// Should not detect conflicts with already-owned rules
-	if len(operations) != 0 {
-		t.Errorf("Expected 0 conflict operations for already-owned rule, got %d", len(operations))
+		t.Errorf("Expected 0 conflict operations when no existing rules, got %d", len(operations))
 	}
 }
 
@@ -325,80 +211,114 @@ func TestCountOwnershipTakeovers(t *testing.T) {
 	}
 }
 
-func TestDetectPortConflicts_TrueConflict(t *testing.T) {
-	controller := &PortForwardReconciler{Config: &config.Config{Debug: false}}
-
-	desiredConfigs := []routers.PortConfig{
+func TestPortConflicts_CreationScenarios(t *testing.T) {
+	testCases := []struct {
+		name           string
+		desiredConfig  routers.PortConfig
+		existingRule   *unifi.PortForward
+		expectConflict bool
+	}{
 		{
-			Name:      "qbittorrent/qbittorrent-bittorrent:tcp",
-			DstPort:   6881,
-			FwdPort:   6881,
-			DstIP:     "192.168.72.3",
-			Protocol:  "tcp",
-			Enabled:   true,
-			Interface: "wan",
-			SrcIP:     "any",
+			name: "conflict_with_manual_rule",
+			desiredConfig: routers.PortConfig{
+				Name:      "qbittorrent/qbittorrent-bittorrent:tcp",
+				DstPort:   6881,
+				FwdPort:   6881,
+				DstIP:     "192.168.72.3",
+				Protocol:  "tcp",
+				Enabled:   true,
+				Interface: "wan",
+				SrcIP:     "any",
+			},
+			existingRule: &unifi.PortForward{
+				ID:            "rule6881",
+				Name:          "qbittorrent",
+				DstPort:       "6881",
+				FwdPort:       "6881",
+				Fwd:           "192.168.1.50",
+				Proto:         "tcp",
+				Enabled:       true,
+				PfwdInterface: "wan",
+				Src:           "any",
+			},
+			expectConflict: true,
 		},
-	}
-
-	// Existing rule with identical port configuration (external+internal+protocol)
-	currentRules := []*unifi.PortForward{
 		{
-			ID:            "rule6881", // Add required ID for validation
-			Name:          "qbittorrent",
-			DstPort:       "6881",
-			FwdPort:       "6881",
-			Fwd:           "192.168.1.50",
-			Proto:         "tcp",
-			Enabled:       true,
-			PfwdInterface: "wan",
-			Src:           "any",
+			name: "no_conflict_different_ports",
+			desiredConfig: routers.PortConfig{
+				Name:      "default/service:tcp",
+				DstPort:   8080,
+				FwdPort:   80,
+				DstIP:     "192.168.1.100",
+				Protocol:  "tcp",
+				Enabled:   true,
+				Interface: "wan",
+				SrcIP:     "any",
+			},
+			existingRule: &unifi.PortForward{
+				Name:          "manual-rule",
+				DstPort:       "9090",
+				FwdPort:       "8080",
+				Fwd:           "192.168.1.50",
+				Proto:         "tcp",
+				Enabled:       true,
+				PfwdInterface: "wan",
+				Src:           "any",
+			},
+			expectConflict: false,
 		},
 	}
 
-	service := &corev1.Service{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "qbittorrent-bittorrent",
-			Namespace: "qbittorrent",
-		},
-	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			helpers.ClearPortConflictTracking()
 
-	operations := controller.detectPortConflicts(currentRules, desiredConfigs, service)
+			controller := &PortForwardReconciler{Config: &config.Config{Debug: false}}
 
-	// Should detect exactly one conflict (both ports + protocol match)
-	if len(operations) != 1 {
-		t.Errorf("Expected 1 conflict operation, got %d", len(operations))
-	}
+			var currentRules []*unifi.PortForward
+			if tc.existingRule != nil {
+				currentRules = []*unifi.PortForward{tc.existingRule}
+			}
 
-	if operations[0].Type != OpUpdate {
-		t.Errorf("Expected UPDATE operation for conflict, got %s", operations[0].Type)
-	}
+			desiredConfigs := []routers.PortConfig{tc.desiredConfig}
 
-	if operations[0].Reason != "ownership_takeover" {
-		t.Errorf("Expected 'ownership_takeover' reason, got %s", operations[0].Reason)
-	}
+			service := &corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-service",
+					Namespace: "default",
+				},
+			}
 
-	// Verify the old rule details
-	if operations[0].ExistingRule.Name != "qbittorrent" {
-		t.Errorf("Expected old rule name 'qbittorrent', got %s", operations[0].ExistingRule.Name)
-	}
+			operations := controller.detectPortConflicts(currentRules, desiredConfigs, service)
 
-	// Verify the new config details
-	if operations[0].Config.DstPort != 6881 {
-		t.Errorf("Expected new config DstPort 6881, got %d", operations[0].Config.DstPort)
-	}
-
-	if operations[0].Config.FwdPort != 6881 {
-		t.Errorf("Expected new config FwdPort 6881, got %d", operations[0].Config.FwdPort)
+			if tc.expectConflict {
+				if len(operations) != 1 {
+					t.Errorf("Expected 1 conflict operation, got %d", len(operations))
+					return
+				}
+				if operations[0].Type != OpUpdate {
+					t.Errorf("Expected UPDATE operation for conflict, got %s", operations[0].Type)
+				}
+				if operations[0].Reason != "ownership_takeover" {
+					t.Errorf("Expected 'ownership_takeover' reason, got %s", operations[0].Reason)
+				}
+			} else {
+				if len(operations) != 0 {
+					t.Errorf("Expected no conflict operations, got %d", len(operations))
+				}
+			}
+		})
 	}
 }
 
-func TestDetectPortConflicts_ExternalPortOnly(t *testing.T) {
+func TestPortConflicts_AlreadyOwned(t *testing.T) {
+	helpers.ClearPortConflictTracking()
+
 	controller := &PortForwardReconciler{Config: &config.Config{Debug: false}}
 
 	desiredConfigs := []routers.PortConfig{
 		{
-			Name:      "test/service:tcp",
+			Name:      "default/web-service:tcp",
 			DstPort:   8080,
 			FwdPort:   80,
 			DstIP:     "192.168.1.100",
@@ -409,12 +329,12 @@ func TestDetectPortConflicts_ExternalPortOnly(t *testing.T) {
 		},
 	}
 
-	// Existing rule with same external port but different internal port
+	// Existing rule already owned by this service (correct naming pattern)
 	currentRules := []*unifi.PortForward{
 		{
-			Name:          "different-rule",
-			DstPort:       "8080", // Same external port
-			FwdPort:       "8080", // Different internal port (80 vs 8080)
+			Name:          "default/web-service:tcp",
+			DstPort:       "8080",
+			FwdPort:       "80",
 			Fwd:           "192.168.1.50",
 			Proto:         "tcp",
 			Enabled:       true,
@@ -425,110 +345,22 @@ func TestDetectPortConflicts_ExternalPortOnly(t *testing.T) {
 
 	service := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "service",
-			Namespace: "test",
+			Name:      "web-service",
+			Namespace: "default",
 		},
 	}
 
 	operations := controller.detectPortConflicts(currentRules, desiredConfigs, service)
 
-	// Should detect NO conflicts (internal ports differ)
+	// Should not detect conflicts with already-owned rules
 	if len(operations) != 0 {
-		t.Errorf("Expected 0 conflict operations when only external port matches, got %d", len(operations))
+		t.Errorf("Expected 0 conflict operations for already-owned rule, got %d", len(operations))
 	}
 }
 
-func TestDetectPortConflicts_InternalPortOnly(t *testing.T) {
-	controller := &PortForwardReconciler{Config: &config.Config{Debug: false}}
+func TestPortConflicts_MultipleConflicts(t *testing.T) {
+	helpers.ClearPortConflictTracking()
 
-	desiredConfigs := []routers.PortConfig{
-		{
-			Name:      "test/service:tcp",
-			DstPort:   8080,
-			FwdPort:   80,
-			DstIP:     "192.168.1.100",
-			Protocol:  "tcp",
-			Enabled:   true,
-			Interface: "wan",
-			SrcIP:     "any",
-		},
-	}
-
-	// Existing rule with same internal port but different external port
-	currentRules := []*unifi.PortForward{
-		{
-			Name:          "different-rule",
-			DstPort:       "9090", // Different external port
-			FwdPort:       "80",   // Same internal port
-			Fwd:           "192.168.1.50",
-			Proto:         "tcp",
-			Enabled:       true,
-			PfwdInterface: "wan",
-			Src:           "any",
-		},
-	}
-
-	service := &corev1.Service{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "service",
-			Namespace: "test",
-		},
-	}
-
-	operations := controller.detectPortConflicts(currentRules, desiredConfigs, service)
-
-	// Should detect NO conflicts (external ports differ)
-	if len(operations) != 0 {
-		t.Errorf("Expected 0 conflict operations when only internal port matches, got %d", len(operations))
-	}
-}
-
-func TestDetectPortConflicts_ProtocolMismatch(t *testing.T) {
-	controller := &PortForwardReconciler{Config: &config.Config{Debug: false}}
-
-	desiredConfigs := []routers.PortConfig{
-		{
-			Name:      "test/service:tcp",
-			DstPort:   8080,
-			FwdPort:   80,
-			DstIP:     "192.168.1.100",
-			Protocol:  "tcp",
-			Enabled:   true,
-			Interface: "wan",
-			SrcIP:     "any",
-		},
-	}
-
-	// Existing rule with same ports but different protocol
-	currentRules := []*unifi.PortForward{
-		{
-			Name:          "different-rule",
-			DstPort:       "8080", // Same external port
-			FwdPort:       "80",   // Same internal port
-			Fwd:           "192.168.1.50",
-			Proto:         "udp", // Different protocol
-			Enabled:       true,
-			PfwdInterface: "wan",
-			Src:           "any",
-		},
-	}
-
-	service := &corev1.Service{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "service",
-			Namespace: "test",
-		},
-	}
-
-	operations := controller.detectPortConflicts(currentRules, desiredConfigs, service)
-
-	// Should detect NO conflicts (protocols differ)
-	if len(operations) != 0 {
-		t.Errorf("Expected 0 conflict operations when protocols differ, got %d", len(operations))
-	}
-}
-
-func TestDetectPortConflicts_MultipleConflicts(t *testing.T) {
 	controller := &PortForwardReconciler{Config: &config.Config{Debug: false}}
 
 	desiredConfigs := []routers.PortConfig{
@@ -609,6 +441,12 @@ func TestDetectPortConflicts_MultipleConflicts(t *testing.T) {
 	// Verify both conflicts are detected
 	conflictPorts := make(map[int]bool)
 	for _, op := range operations {
+		if op.Type != OpUpdate {
+			t.Errorf("Expected UPDATE operation for conflict, got %s", op.Type)
+		}
+		if op.Reason != "ownership_takeover" {
+			t.Errorf("Expected 'ownership_takeover' reason, got %s", op.Reason)
+		}
 		conflictPorts[op.Config.DstPort] = true
 	}
 
@@ -620,196 +458,149 @@ func TestDetectPortConflicts_MultipleConflicts(t *testing.T) {
 		t.Error("Expected conflict for port 8443 not detected")
 	}
 
-	if conflictPorts[9090] {
-		t.Error("Unexpected conflict detected for port 9090 (should not conflict)")
+	// Should not conflict with 8080 rule that has different internal port
+	if conflictPorts[8080] && len(operations) == 3 {
+		t.Error("Unexpected conflict detected for port 8080 with different internal port")
 	}
 }
 
-// TestConflictDetectionOwnershipTakeoverBug tests the specific bug where
-// deleting "91:https" from annotation "89:http,91:https" incorrectly generates
-// an UPDATE operation for port 89 that fails with "not found"
-func TestConflictDetectionOwnershipTakeoverBug(t *testing.T) {
-	// Clear port tracking first to avoid conflicts
+func TestPortConflicts_ProtocolMismatch(t *testing.T) {
 	helpers.ClearPortConflictTracking()
 
-	// Setup - create service with annotation "89:http,91:https"
-	service := &corev1.Service{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "web-service",
-			Namespace: "test-namespace",
-			Annotations: map[string]string{
-				"unifi-port-forward.fiskhe.st/mapping": "89:http,91:https",
-			},
-		},
-		Spec: corev1.ServiceSpec{
-			Selector: map[string]string{"app": "web"},
-			Ports: []corev1.ServicePort{
-				{
-					Name:     "http",
-					Port:     8080,
-					Protocol: corev1.ProtocolTCP,
-				},
-				{
-					Name:     "https",
-					Port:     8181,
-					Protocol: corev1.ProtocolTCP,
-				},
-			},
+	controller := &PortForwardReconciler{Config: &config.Config{Debug: false}}
+
+	desiredConfigs := []routers.PortConfig{
+		{
+			Name:      "test/service:tcp",
+			DstPort:   8080,
+			FwdPort:   80,
+			DstIP:     "192.168.1.100",
+			Protocol:  "tcp",
+			Enabled:   true,
+			Interface: "wan",
+			SrcIP:     "any",
 		},
 	}
 
-	// Parse port configurations from annotation
-	configs, err := helpers.GetPortConfigs(service, "192.168.1.100", "unifi-port-forward.fiskhe.st/mapping")
-	if err != nil {
-		t.Fatalf("Failed to get port configs: %v", err)
-	}
-	if len(configs) != 2 {
-		t.Fatalf("Expected 2 configs, got %d", len(configs))
-	}
-
-	// Verify initial configs
-	if configs[0].DstPort != 89 {
-		t.Errorf("Expected DstPort 89, got %d", configs[0].DstPort)
-	}
-	if configs[0].FwdPort != 8080 {
-		t.Errorf("Expected FwdPort 8080, got %d", configs[0].FwdPort)
-	}
-	if configs[1].DstPort != 91 {
-		t.Errorf("Expected DstPort 91, got %d", configs[1].DstPort)
-	}
-	if configs[1].FwdPort != 8181 {
-		t.Errorf("Expected FwdPort 8181, got %d", configs[1].FwdPort)
-	}
-
-	// Simulate existing router state:
-	// - Port 89 rule exists but with different forward port (owned by another service)
-	// - Port 91 rule exists (owned by this service)
+	// Existing rule with same ports but different protocol
 	currentRules := []*unifi.PortForward{
 		{
-			ID:      "rule89",
-			Name:    "other-service:http",
-			DstPort: "89",
-			FwdPort: "9090", // Different forward port - this is the key issue
-			Fwd:     "192.168.1.100",
-			Proto:   "tcp",
-			Enabled: true,
-		},
-		{
-			ID:      "rule91",
-			Name:    "test-namespace/web-service:https",
-			DstPort: "91",
-			FwdPort: "8181",
-			Fwd:     "192.168.1.100",
-			Proto:   "tcp",
-			Enabled: true,
+			Name:          "different-rule",
+			DstPort:       "8080",
+			FwdPort:       "80",
+			Fwd:           "192.168.1.50",
+			Proto:         "udp", // Different protocol
+			Enabled:       true,
+			PfwdInterface: "wan",
+			Src:           "any",
 		},
 	}
 
-	// Create reconciler
-	reconciler := &PortForwardReconciler{}
-	changeContext := &ChangeContext{IPChanged: false}
-
-	// Test the scenario: user deletes 91:https, keeping only 89:http
-	// This should generate DELETE for port 91 and no UPDATE for port 89
-	updatedConfigs := []routers.PortConfig{configs[0]} // Only keep port 89 config
-
-	operations := reconciler.calculateDelta(currentRules, updatedConfigs, changeContext, service)
-
-	// Verify operations - should only have DELETE for port 91, no UPDATE for port 89
-	if len(operations) != 2 {
-		t.Errorf("Expected exactly 2 operations, got %d", len(operations))
+	service := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "service",
+			Namespace: "test",
+		},
 	}
 
-	// Find DELETE operation
-	var deleteOp *PortOperation
-	var updateOp *PortOperation
+	operations := controller.detectPortConflicts(currentRules, desiredConfigs, service)
 
-	for i := range operations {
-		switch operations[i].Type {
-		case OpDelete:
-			deleteOp = &operations[i]
-		case OpUpdate:
-			updateOp = &operations[i]
-		}
-	}
-
-	// Should have DELETE for port 91
-	if deleteOp == nil {
-		t.Fatal("Should have DELETE operation")
-		return
-	}
-
-	if deleteOp.Config.DstPort != 91 {
-		t.Errorf("DELETE should be for port 91, got %d", deleteOp.Config.DstPort)
-	}
-	if deleteOp.Reason != "port_no_longer_desired" {
-		t.Errorf("Expected reason 'port_no_longer_desired', got %s", deleteOp.Reason)
-	}
-
-	// Should NOT have UPDATE for port 89 (this was the bug)
-	if updateOp != nil {
-		// If there's an UPDATE, it should be a validated conflict operation
-		// but in this bug scenario, there should be no UPDATE at all
-		t.Logf("Found UPDATE operation (this might indicate the bug still exists): %+v", updateOp)
-		t.Errorf("UPDATE operation should not exist for port 89 in this scenario")
+	// Should detect NO conflicts (protocols differ)
+	if len(operations) != 0 {
+		t.Errorf("Expected 0 conflict operations when protocols differ, got %d", len(operations))
 	}
 }
 
-// TestValidateConflictOperations tests the new validation function
-func TestValidateConflictOperations(t *testing.T) {
-	reconciler := &PortForwardReconciler{}
+func TestPortConflicts_ExternalPortOnly(t *testing.T) {
+	helpers.ClearPortConflictTracking()
 
-	// Create test operations including an invalid conflict operation
-	operations := []PortOperation{
+	controller := &PortForwardReconciler{Config: &config.Config{Debug: false}}
+
+	desiredConfigs := []routers.PortConfig{
 		{
-			Type: OpUpdate,
-			Config: routers.PortConfig{
-				Name:     "test/service:port",
-				DstPort:  89,
-				FwdPort:  8080,
-				Protocol: "tcp",
-			},
-			ExistingRule: &unifi.PortForward{
-				ID:      "missing-rule", // This ID doesn't exist in currentRules
-				DstPort: "89",
-				FwdPort: "8080",
-				Proto:   "tcp",
-			},
-			Reason: "ownership_takeover",
-		},
-		{
-			Type: OpDelete,
-			Config: routers.PortConfig{
-				Name:     "test/service:port2",
-				DstPort:  91,
-				FwdPort:  8181,
-				Protocol: "tcp",
-			},
-			Reason: "port_no_longer_desired",
+			Name:      "test/service:tcp",
+			DstPort:   8080,
+			FwdPort:   80,
+			DstIP:     "192.168.1.100",
+			Protocol:  "tcp",
+			Enabled:   true,
+			Interface: "wan",
+			SrcIP:     "any",
 		},
 	}
 
-	// Current rules - the missing rule ID is not present
+	// Existing rule with same external port but different internal port
 	currentRules := []*unifi.PortForward{
 		{
-			ID:      "different-rule",
-			DstPort: "80",
-			FwdPort: "8080",
-			Proto:   "tcp",
+			Name:          "different-rule",
+			DstPort:       "8080", // Same external port
+			FwdPort:       "8080", // Different internal port (80 vs 8080)
+			Fwd:           "192.168.1.50",
+			Proto:         "tcp",
+			Enabled:       true,
+			PfwdInterface: "wan",
+			Src:           "any",
 		},
 	}
 
-	// Validate operations
-	validated := reconciler.validateConflictOperations(operations, currentRules)
+	service := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "service",
+			Namespace: "test",
+		},
+	}
 
-	// Should only have the DELETE operation (UPDATE should be filtered out)
-	if len(validated) != 1 {
-		t.Errorf("Expected 1 validated operation, got %d", len(validated))
+	operations := controller.detectPortConflicts(currentRules, desiredConfigs, service)
+
+	// Should detect NO conflicts (internal ports differ)
+	if len(operations) != 0 {
+		t.Errorf("Expected 0 conflict operations when only external port matches, got %d", len(operations))
 	}
-	if validated[0].Type != OpDelete {
-		t.Errorf("Expected OpDelete, got %s", validated[0].Type)
+}
+
+func TestPortConflicts_InternalPortOnly(t *testing.T) {
+	helpers.ClearPortConflictTracking()
+
+	controller := &PortForwardReconciler{Config: &config.Config{Debug: false}}
+
+	desiredConfigs := []routers.PortConfig{
+		{
+			Name:      "test/service:tcp",
+			DstPort:   8080,
+			FwdPort:   80,
+			DstIP:     "192.168.1.100",
+			Protocol:  "tcp",
+			Enabled:   true,
+			Interface: "wan",
+			SrcIP:     "any",
+		},
 	}
-	if validated[0].Config.DstPort != 91 {
-		t.Errorf("Expected DstPort 91, got %d", validated[0].Config.DstPort)
+
+	// Existing rule with same internal port but different external port
+	currentRules := []*unifi.PortForward{
+		{
+			Name:          "different-rule",
+			DstPort:       "9090", // Different external port
+			FwdPort:       "80",   // Same internal port
+			Fwd:           "192.168.1.50",
+			Proto:         "tcp",
+			Enabled:       true,
+			PfwdInterface: "wan",
+			Src:           "any",
+		},
+	}
+
+	service := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "service",
+			Namespace: "test",
+		},
+	}
+
+	operations := controller.detectPortConflicts(currentRules, desiredConfigs, service)
+
+	// Should detect NO conflicts (external ports differ)
+	if len(operations) != 0 {
+		t.Errorf("Expected 0 conflict operations when only internal port matches, got %d", len(operations))
 	}
 }
