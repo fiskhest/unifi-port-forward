@@ -1,5 +1,5 @@
 ###
-### Creates a single rule `namespace/web-service:http` that forwards the WAN port 80 to service port named "http"
+### Creates a single rule `namespace/web-service:http` that forwards the WAN port 8888 to service port named "http" (1234)
 ###
 ---
 apiVersion: v1
@@ -7,20 +7,17 @@ kind: Service
 metadata:
   name: web-service
   annotations:
-    unifi-port-forward.fiskhe.st/mapping: "89:http,91:https"
+    unifi-port-forward.fiskhe.st/mapping: "8888:http"
 spec:
   selector:
     app: web-service
   ports:
     - name: http
-      port: 8080
-      targetPort: 80
-    - name: https
-      port: 8181
+      port: 1234
       targetPort: 80
   type: LoadBalancer
 ###
-### Creates a single rule `namespace/web-service:http` that forwards the WAN port 3000 to service port named "http" (uses same port)
+### Creates a single rule `namespace/web-service2:http` that forwards the WAN port 3000 to service port named "http" (uses the same on both ends)
 ###
 ---
 apiVersion: v1
@@ -28,7 +25,7 @@ kind: Service
 metadata:
   name: web-service2
   annotations:
-    unifi-port-forward.fiskhe.st/mapping: "3001:http"
+    unifi-port-forward.fiskhe.st/mapping: "http"
 spec:
   selector:
     app: web-service2

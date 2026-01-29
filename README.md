@@ -53,19 +53,47 @@ just test
 - `UNIFI_API_KEY` : API key instead of user/pass. Untested(!)
 - `UNIFI_SITE`: UniFi site name (default: default)
 
+For authenticating, it is recommended to create a dedicated service account. Use role `Admin`, with full control to the network.
+
 ### Kubernetes Installation
 
 **Prerequisites**
-- A namespace
+- A namespace (the default configured in these manifests: `unifi-port-forward`)
 - A router with provisioned credentials
 - A functional LoadBalancer implementation that assigns valid IP addresses to Service LoadBalancer objects
 
-**Customize Environment Variables**
+
+**Deploy the annotation based Controller**
 Edit `manifests/deployment.yaml` and update the environment variables in the container spec.
 
-**Deploy the Controller**
 ```bash
-kubectl apply -f manifests/
+kubectl apply -f manifests/deployment.yaml
+```
+
+**Test the controller by creating a test service*
+``` bash
+kubectl apply -f manifests/test-service.yaml
+```
+
+If everything works, you should see a new port forward rule added on the router:
+- Name: `unifi-port-forward/test-service9090-80:http`
+- WAN Port: `9090`
+- Forward Port: `80`
+- Forward IP: the IP allocated to the LoadBalancer service
+
+**Deploy CRDs**
+Optionally, one can install Custom Resource Definitions implementing the CRD
+`portforwardrules.unifi-port-forward.fiskhe.st`.
+
+``` bash
+kubectl apply -f manifests/crd
+```
+
+There are two types of CRD-based port forward rules, serviceref and standalone.
+Serviceref makes a mapping to a running kubernetes service, while standalone can be used to create port forward for external services
+``` bash
+kubectl apply -f examples/crds/portforwardrule-serviceref.yaml
+kubectl apply -f examples/crds/portforwardrule-standalone.yaml
 ```
 
 ## Contributing

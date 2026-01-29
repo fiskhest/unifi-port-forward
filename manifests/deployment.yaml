@@ -23,9 +23,9 @@ spec:
             - name: UNIFI_USERNAME
               value: unifi-port-forward
             - name: UNIFI_ROUTER_IP
-              value: 192.168.27.1
+              value: 192.168.1.1
             - name: UNIFI_PASSWORD
-              value: q4Fz\5#hdhaMHc.TL6UNMX+$ // TODO: RENEW AND REDACT BEFORE PUBLISHING
+              value: password
             - name: DEBUG
               value: "True"
 ---
