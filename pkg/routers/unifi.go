@@ -64,7 +64,7 @@ func (router *UnifiRouter) withAuthRetry(ctx context.Context, operation string, 
 	err := fn()
 	if err != nil {
 		if serverErr, ok := err.(*unifi.ServerError); ok && serverErr.StatusCode == http.StatusUnauthorized {
-			logger.Info("Authentication failure detected, reauthenticating", "operation", operation)
+			logger.Info("Renewing authentication to router", "operation", operation)
 			if loginErr := router.Client.Login(); loginErr == nil {
 				err = fn()
 			}
