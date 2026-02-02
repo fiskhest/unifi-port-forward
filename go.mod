@@ -1,6 +1,6 @@
 module unifi-port-forward
 
-go 1.23.6
+go 1.25.6
 
 require (
 	github.com/filipowm/go-unifi v1.8.1

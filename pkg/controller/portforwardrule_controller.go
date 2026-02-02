@@ -318,7 +318,7 @@ func (r *PortForwardRuleReconciler) updateRuleStatusWithRetry(ctx context.Contex
 	backoffDuration := 100 * time.Millisecond
 	maxAttempts := 3
 
-	for attempt := 0; attempt < maxAttempts; attempt++ {
+	for attempt := range maxAttempts {
 		if attempt > 0 {
 			logger.Info("Retrying status update attempt",
 				"attempt", attempt+1,

@@ -1,7 +1,7 @@
 # Multi-stage build for unifi-port-forward
 
 # Stage 1: Build controller
-FROM golang:1.23-alpine AS builder
+FROM golang:1.25-alpine AS builder
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod \

@@ -120,7 +120,7 @@ func (r *PortForwardReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		maxRetries := 3
 		retryDelay := time.Millisecond * 10
 
-		for attempt := 0; attempt < maxRetries; attempt++ {
+		for attempt := range maxRetries {
 			if attempt > 0 {
 				// Re-fetch service to get latest state
 				if err := r.Get(ctx, req.NamespacedName, service); err != nil {
