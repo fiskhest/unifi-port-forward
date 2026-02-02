@@ -3,6 +3,7 @@ package testutils
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 
@@ -197,10 +198,8 @@ func (f *FakeEventRecorder) HasEvent(serviceName, namespace, reason, message str
 func (f *FakeEventRecorder) HasEventContaining(serviceName, namespace, reason, messageFragment string) bool {
 	events := f.GetEventsForService(serviceName, namespace)
 	for _, event := range events {
-		if event.Reason == reason && len(event.Message) >= len(messageFragment) {
-			if contains(event.Message, messageFragment) {
-				return true
-			}
+		if event.Reason == reason && strings.Contains(event.Message, messageFragment) {
+			return true
 		}
 	}
 	return false
@@ -237,7 +236,7 @@ func (h *EventTestHelper) AssertEventPublished(serviceName, namespace, reason, m
 
 	found := false
 	for _, event := range events {
-		if event.Reason == reason && contains(event.Message, messageContains) {
+		if event.Reason == reason && strings.Contains(event.Message, messageContains) {
 			found = true
 			break
 		}
@@ -299,20 +298,4 @@ func (h *EventTestHelper) ClearEvents() {
 
 func (h *EventTestHelper) GetEventCount() int {
 	return len(h.Recorder.Events)
-}
-
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && findSubstring(s, substr)
-}
-
-func findSubstring(s, substr string) bool {
-	if len(substr) > len(s) {
-		return false
-	}
-	for i := range len(s) - len(substr) + 1 {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }
