@@ -96,6 +96,35 @@ kubectl apply -f examples/crds/portforwardrule-serviceref.yaml
 kubectl apply -f examples/crds/portforwardrule-standalone.yaml
 ```
 
+## Automated Deployment
+
+This project uses GitHub Actions for continuous integration and automated Docker image deployment to GitHub Container Registry (GHCR).
+
+### CI/CD Pipeline
+
+- **Trigger**: Automatic on push to `main` branch
+- **Registry**: `ghcr.io/fiskhest/unifi-port-forward` (public)
+- **Tagging**: 
+  - `latest` - Always points to the latest build
+  - `YYYY-MM-DD-commit` - Unique tag per build (e.g., `2025-01-30-a1b2c3d`)
+
+### Deployment Commands
+
+```bash
+# Using latest tag (recommended)
+kubectl set image deployment/unifi-port-forward controller=ghcr.io/fiskhest/unifi-port-forward:latest
+
+# Using specific date tag for rollback
+kubectl set image deployment/unifi-port-forward controller=ghcr.io/fiskhest/unifi-port-forward:2025-01-30-a1b2c3d
+```
+
+### Local Development
+
+Build and push locally using the justfile:
+```bash
+just build
+```
+
 ## Contributing
 
 Issues may be addressed, but no guarantees can be given.

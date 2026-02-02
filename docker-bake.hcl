@@ -1,5 +1,5 @@
 variable "REGISTRY" {
-  default = "johrad/unifi-port-forward"
+  default = "ghcr.io/fiskhest/unifi-port-forward"
 }
 
 group "default" {

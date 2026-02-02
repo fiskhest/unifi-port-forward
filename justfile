@@ -60,4 +60,4 @@ alias b := build
 
 # Do docker build
 @build:
-    docker build --push -t johrad/unifi-port-forward .
+    docker build --push -t ghcr.io/fiskhest/unifi-port-forward .
