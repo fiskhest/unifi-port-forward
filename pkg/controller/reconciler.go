@@ -411,7 +411,6 @@ func (r *PortForwardReconciler) finalizeService(ctx context.Context, service *co
 	logger := ctrllog.FromContext(ctx)
 
 	// Get current port forward rules with timeout protection
-	// TODO: withAuthRetry on all ListAllPortForwards?
 	currentRules, err := r.Router.ListAllPortForwards(ctx)
 	if err != nil {
 		logger.Error(err, "listing port forwards during cleanup")
@@ -869,7 +868,5 @@ func (r *PortForwardReconciler) analyzeDetailedChanges(currentRules []*unifi.Por
 		changeContext.SpecChanged = true
 	}
 
-	// TODO: HAHA YOU FORGOT ABOUT THIS MOTHERFUCKING PIECE OF SHIT AI????
-	// This is where we can add granular change tracking in the future
 	return changeContext
 }
