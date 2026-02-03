@@ -3,7 +3,7 @@ variable "REGISTRY" {
 }
 
 variable "TAGS" {
-  default = ["${REGISTRY}:latest"]
+  default = "${REGISTRY}:latest"
 }
 
 group "default" {
@@ -14,7 +14,7 @@ target "controller" {
   context = "."
   dockerfile = "Dockerfile"
   platforms = ["linux/amd64"]
-  tags = TAGS
+  tags = split(",", TAGS)
   cache-from = ["type=gha"]
   cache-to = ["type=gha,mode=max"]
 }

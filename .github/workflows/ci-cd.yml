@@ -36,12 +36,13 @@ jobs:
           DATE=$(date +%Y-%m-%d)
           COMMIT_SHA=${GITHUB_SHA::7}
           echo "date-tag=${DATE}-${COMMIT_SHA}" >> $GITHUB_OUTPUT
+          echo "tags=${{ env.REGISTRY }}:latest,${{ env.REGISTRY }}:${DATE}-${COMMIT_SHA}" >> $GITHUB_OUTPUT
 
       - name: Build and push Docker image
         uses: docker/bake-action@v6
         with:
           push: true
           set: |
-            controller.tags=["${{ env.REGISTRY }}:latest","${{ env.REGISTRY }}:$(date +%Y-%m-%d)-${GITHUB_SHA::7}"]
+            controller.tags=${{ steps.meta.outputs.tags }}
             *.cache-from=type=gha
             *.cache-to=type=gha,mode=max
