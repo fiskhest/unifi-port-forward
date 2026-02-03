@@ -70,7 +70,7 @@ Edit `manifests/deployment.yaml` and update the environment variables in the con
 kubectl apply -f manifests/deployment.yaml
 ```
 
-**Test the controller by creating a test service*
+**Test the controller by provisioning a test service**
 ``` bash
 kubectl apply -f manifests/test-service.yaml
 ```
@@ -81,8 +81,8 @@ If everything works, you should see a new port forward rule added on the router:
 - Forward Port: `80`
 - Forward IP: the IP allocated to the LoadBalancer service
 
-**Deploy CRDs**
-Optionally, one can install Custom Resource Definitions implementing the CRD
+**Deploy CRDs**  
+Optionally, one can install Custom Resource Definition (CRD)
 `portforwardrules.unifi-port-forward.fiskhe.st`.
 
 ``` bash
