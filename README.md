@@ -3,7 +3,7 @@
 Rumour says that the Unifi Cloud Gateway Max finally supports BGP.
 A wiser man than I once quipped that automating ones router would be a fools errand. I wholeheartedly agree, but it does not change the fact that I also am a fool. And proud inventor of footguns everywhere.
 
-Kubernetes controllers are fun. This controller will look for any `LoadBalancer` objects annotated with `unifi-port-forward.fiskhe.st/mapping`. A mapping is a `key:value` pair of the externally facing port mapped to the service that the port forward should forward the traffic to.
+Kubernetes controllers are fun. This controller will look for any `LoadBalancer` objects annotated with `unifi-port-forward.fiskhe.st/mapping`. A mapping is one or more `key:value` pairs (comma-separated) of the externally facing port mapped to the service that the port forward should forward the traffic to.
 
 On first startup, the controller will check all services and then inspect the currently provisioned Port Forward rules on the Unifi router, either updating or ensuring that port forward rules match with the service object spec and annotation rule. Thereafter, it will periodically reconcile on a schedule ensuring router port forward rules weren't brought out of sync by some other means.
 
