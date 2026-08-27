@@ -10,6 +10,7 @@ import (
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
+	"unifi-port-forward/pkg/ports"
 )
 
 const (
@@ -30,11 +31,14 @@ type PortForwardEventData struct {
 	PortMapping      string `json:"port_mapping"`
 	ExternalIP       string `json:"external_ip"`
 	InternalIP       string `json:"internal_ip"`
-	ExternalPort     int    `json:"external_port"`
-	Protocol         string `json:"protocol"`
-	Reason           string `json:"reason"`
-	Message          string `json:"message"`
-	Error            string `json:"error,omitempty"`
+	// ExternalPort is the lowest external port of the rule, kept as a number for
+	// consumers that predate range support. ExternalPorts carries the full spec.
+	ExternalPort  int    `json:"external_port"`
+	ExternalPorts string `json:"external_ports,omitempty"`
+	Protocol      string `json:"protocol"`
+	Reason        string `json:"reason"`
+	Message       string `json:"message"`
+	Error         string `json:"error,omitempty"`
 }
 
 type EventPublisher struct {
@@ -51,7 +55,7 @@ func NewEventPublisher(client client.Client, recorder record.EventRecorder, sche
 	}
 }
 
-func (ep *EventPublisher) PublishPortForwardCreatedEvent(ctx context.Context, service *corev1.Service, portName, portMapping, externalIP, internalIP string, internalPort, externalPort int, protocol, reason string) {
+func (ep *EventPublisher) PublishPortForwardCreatedEvent(ctx context.Context, service *corev1.Service, portName, portMapping, externalIP, internalIP string, internalPorts, externalPorts ports.Spec, protocol, reason string) {
 	logger := ctrllog.FromContext(ctx)
 
 	eventData := &PortForwardEventData{
@@ -61,23 +65,24 @@ func (ep *EventPublisher) PublishPortForwardCreatedEvent(ctx context.Context, se
 		PortMapping:      portMapping,
 		ExternalIP:       externalIP,
 		InternalIP:       internalIP,
-		ExternalPort:     externalPort,
+		ExternalPort:     externalPorts.Low(),
+		ExternalPorts:    externalPorts.String(),
 		Protocol:         protocol,
 		Reason:           reason,
-		Message:          fmt.Sprintf("%s(%s) -> %s:%d", portName, protocol, internalIP, externalPort),
+		Message:          fmt.Sprintf("%s(%s) -> %s:%s", portName, protocol, internalIP, externalPorts),
 	}
 
-	message := fmt.Sprintf("Created port forward rule '%s/%s:%s': %d(%s) -> %s:%d", service.Namespace, service.Name, portName, externalPort, protocol, internalIP, internalPort)
+	message := fmt.Sprintf("Created port forward rule '%s/%s:%s': %s(%s) -> %s:%s", service.Namespace, service.Name, portName, externalPorts, protocol, internalIP, internalPorts)
 
 	if err := ep.createEvent(ctx, service, EventPortForwardCreated, message, eventData); err != nil {
 		logger.Error(err, "Failed to publish PortForwardCreated event")
 		return
 	}
 
-	logger.V(1).Info("Published PortForwardCreated event", "port_mapping", portMapping, "external_port", externalPort)
+	logger.V(1).Info("Published PortForwardCreated event", "port_mapping", portMapping, "external_port", externalPorts)
 }
 
-func (ep *EventPublisher) PublishPortForwardUpdatedEvent(ctx context.Context, service *corev1.Service, portName, portMapping, externalIP, internalIP string, externalPort int, protocol, reason string) {
+func (ep *EventPublisher) PublishPortForwardUpdatedEvent(ctx context.Context, service *corev1.Service, portName, portMapping, externalIP, internalIP string, externalPorts ports.Spec, protocol, reason string) {
 	logger := ctrllog.FromContext(ctx)
 
 	eventData := &PortForwardEventData{
@@ -87,10 +92,11 @@ func (ep *EventPublisher) PublishPortForwardUpdatedEvent(ctx context.Context, se
 		PortMapping:      portMapping,
 		ExternalIP:       externalIP,
 		InternalIP:       internalIP,
-		ExternalPort:     externalPort,
+		ExternalPort:     externalPorts.Low(),
+		ExternalPorts:    externalPorts.String(),
 		Protocol:         protocol,
 		Reason:           reason,
-		Message:          fmt.Sprintf("%s -> %s:%d (%s)", portMapping, internalIP, externalPort, protocol),
+		Message:          fmt.Sprintf("%s -> %s:%s (%s)", portMapping, internalIP, externalPorts, protocol),
 	}
 
 	message := fmt.Sprintf("Updated port forward rule '%s/%s:%s'", service.Namespace, service.Name, portName)
@@ -100,10 +106,10 @@ func (ep *EventPublisher) PublishPortForwardUpdatedEvent(ctx context.Context, se
 		return
 	}
 
-	logger.V(1).Info("Published PortForwardUpdated event", "port_mapping", portMapping, "external_port", externalPort)
+	logger.V(1).Info("Published PortForwardUpdated event", "port_mapping", portMapping, "external_port", externalPorts)
 }
 
-func (ep *EventPublisher) PublishPortForwardDeletedEvent(ctx context.Context, service *corev1.Service, portName, portMapping string, externalPort int, protocol, reason string) {
+func (ep *EventPublisher) PublishPortForwardDeletedEvent(ctx context.Context, service *corev1.Service, portName, portMapping string, externalPorts ports.Spec, protocol, reason string) {
 	logger := ctrllog.FromContext(ctx)
 
 	eventData := &PortForwardEventData{
@@ -111,23 +117,24 @@ func (ep *EventPublisher) PublishPortForwardDeletedEvent(ctx context.Context, se
 		ServiceNamespace: service.Namespace,
 		ServiceName:      service.Name,
 		PortMapping:      portMapping,
-		ExternalPort:     externalPort,
+		ExternalPort:     externalPorts.Low(),
+		ExternalPorts:    externalPorts.String(),
 		Protocol:         protocol,
 		Reason:           reason,
-		Message:          fmt.Sprintf("%s(%s) (port %d)", portName, protocol, externalPort),
+		Message:          fmt.Sprintf("%s(%s) (port %s)", portName, protocol, externalPorts),
 	}
 
-	message := fmt.Sprintf("Deleted port forward rule '%s/%s:%s': %d(%s)", service.Namespace, service.Name, portName, externalPort, protocol)
+	message := fmt.Sprintf("Deleted port forward rule '%s/%s:%s': %s(%s)", service.Namespace, service.Name, portName, externalPorts, protocol)
 
 	if err := ep.createEvent(ctx, service, EventPortForwardDeleted, message, eventData); err != nil {
 		logger.Error(err, "Failed to publish PortForwardDeleted event")
 		return
 	}
 
-	logger.V(1).Info("Published PortForwardDeleted event", "port_mapping", portMapping, "external_port", externalPort)
+	logger.V(1).Info("Published PortForwardDeleted event", "port_mapping", portMapping, "external_port", externalPorts)
 }
 
-func (ep *EventPublisher) PublishPortForwardFailedEvent(ctx context.Context, service *corev1.Service, portMapping, externalIP, internalIP string, externalPort int, protocol, reason string, err error) {
+func (ep *EventPublisher) PublishPortForwardFailedEvent(ctx context.Context, service *corev1.Service, portMapping, externalIP, internalIP string, externalPorts ports.Spec, protocol, reason string, err error) {
 	logger := ctrllog.FromContext(ctx)
 
 	errorMsg := ""
@@ -142,7 +149,8 @@ func (ep *EventPublisher) PublishPortForwardFailedEvent(ctx context.Context, ser
 		PortMapping:      portMapping,
 		ExternalIP:       externalIP,
 		InternalIP:       internalIP,
-		ExternalPort:     externalPort,
+		ExternalPort:     externalPorts.Low(),
+		ExternalPorts:    externalPorts.String(),
 		Protocol:         protocol,
 		Reason:           reason,
 		Message:          reason,
@@ -191,18 +199,19 @@ func (ep *EventPublisher) createEvent(ctx context.Context, service *corev1.Servi
 	return nil
 }
 
-func (ep *EventPublisher) PublishPortForwardTakenOwnershipEvent(ctx context.Context, service *corev1.Service, oldRuleName, newRuleName string, externalPort int, protocol string) {
+func (ep *EventPublisher) PublishPortForwardTakenOwnershipEvent(ctx context.Context, service *corev1.Service, oldRuleName, newRuleName string, externalPorts ports.Spec, protocol string) {
 	logger := ctrllog.FromContext(ctx)
 
 	eventData := &PortForwardEventData{
 		ServiceKey:       fmt.Sprintf("%s/%s", service.Namespace, service.Name),
 		ServiceNamespace: service.Namespace,
 		ServiceName:      service.Name,
-		PortMapping:      fmt.Sprintf("%d:%d", externalPort, externalPort),
-		ExternalPort:     externalPort,
+		PortMapping:      fmt.Sprintf("%s:%s", externalPorts, externalPorts),
+		ExternalPort:     externalPorts.Low(),
+		ExternalPorts:    externalPorts.String(),
 		Protocol:         protocol,
 		Reason:           "PortConflictTakeOwnership",
-		Message:          fmt.Sprintf("Renamed manual rule '%s' to '%s' (port %d, %s)", oldRuleName, newRuleName, externalPort, protocol),
+		Message:          fmt.Sprintf("Renamed manual rule '%s' to '%s' (port %s, %s)", oldRuleName, newRuleName, externalPorts, protocol),
 	}
 
 	message := fmt.Sprintf("Took ownership of existing port forward rule: %s service: %s - renamed from '%s' to '%s'",
@@ -212,7 +221,7 @@ func (ep *EventPublisher) PublishPortForwardTakenOwnershipEvent(ctx context.Cont
 		logger.Error(err, "Failed to publish PortForwardTakenOwnership event")
 	} else {
 		logger.Info("Published PortForwardTakenOwnership event",
-			"old_rule", oldRuleName, "new_rule", newRuleName, "external_port", externalPort)
+			"old_rule", oldRuleName, "new_rule", newRuleName, "external_port", externalPorts)
 	}
 }
 

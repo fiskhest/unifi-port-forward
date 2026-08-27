@@ -1,0 +1,52 @@
+###
+### NodePort services are reached through a node rather than through a dedicated
+### service address, so rules forward to <node IP>:<nodePort>.
+###
+### The WAN port still comes from the annotation and the internal port is the
+### allocated nodePort - you never write the nodePort down, which is just as well
+### since the API server picks it.
+###
+### Here the controller creates `namespace/web-nodeport:http` forwarding WAN 8080
+### to <node IP>:31234.
+###
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web-nodeport
+  annotations:
+    unifi-port-forward.fiskhe.st/mapping: "8080:http"
+spec:
+  selector:
+    app: web-nodeport
+  type: NodePort
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+      nodePort: 31234
+###
+### The node is picked automatically: the lowest-named Ready node that is not
+### labelled node.kubernetes.io/exclude-from-external-load-balancers. That choice
+### is re-made every reconcile, so losing a node heals on the next pass.
+###
+### To pin the address instead - a specific node, a keepalived VIP, a HA proxy in
+### front of the nodes - set dst-ip. It overrides discovery entirely and needs no
+### node read permission.
+###
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web-nodeport-pinned
+  annotations:
+    unifi-port-forward.fiskhe.st/mapping: "8443:https"
+    unifi-port-forward.fiskhe.st/dst-ip: "192.168.1.21"
+spec:
+  selector:
+    app: web-nodeport-pinned
+  type: NodePort
+  ports:
+    - name: https
+      port: 443
+      targetPort: 8443

@@ -1,3 +1,6 @@
 unifi-port-forward
 unifi-port-forward
 bin/
+
+# Local overrides loaded by the justfile (e.g. REGISTRY for a fork)
+.env

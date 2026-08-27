@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"strconv"
 
+	"unifi-port-forward/pkg/ports"
 	"unifi-port-forward/pkg/routers"
 )
 
@@ -39,13 +39,21 @@ func Run(cfg Config, portMaps map[string]string) error {
 
 	// Delete each rule
 	for dstPort, dstIP := range portMaps {
+		// portMaps keys are already normalized, so compare on the parsed spec:
+		// a rule the router reports as "8000,8001" matches a "8000-8001" mapping.
+		wanted, err := ports.Parse(dstPort)
+		if err != nil {
+			log.Printf("skipping unparseable port mapping %s: %v", dstPort, err)
+			continue
+		}
+
 		for _, pf := range portforwards {
 			fmt.Printf("Checking rule: %+v\n", pf)
-			if pf.FwdPort == dstPort && pf.Fwd == dstIP {
+			if ports.ParseOrEmpty(pf.FwdPort).Equal(wanted) && pf.Fwd == dstIP {
 				fmt.Println("port matched")
 
-				// Convert external port from string to int
-				extPort, err := strconv.Atoi(pf.DstPort)
+				// Parse the external port spec (a single port, a range or a list)
+				extPorts, err := ports.Parse(pf.DstPort)
 				if err != nil {
 					log.Printf("failed to parse external port %s: %v", pf.DstPort, err)
 					continue
@@ -55,7 +63,7 @@ func Run(cfg Config, portMaps map[string]string) error {
 				portConfig := routers.PortConfig{
 					Name:     pf.Name,
 					Enabled:  pf.Enabled,
-					DstPort:  extPort, // External port (what users connect to)
+					DstPort:  extPorts, // External port(s) (what users connect to)
 					Protocol: pf.Proto,
 					DstIP:    pf.Fwd,
 				}

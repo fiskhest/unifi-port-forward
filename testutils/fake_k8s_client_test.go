@@ -7,6 +7,7 @@ import (
 
 	"unifi-port-forward/pkg/config"
 	"unifi-port-forward/pkg/helpers"
+	"unifi-port-forward/pkg/ports"
 
 	"github.com/filipowm/go-unifi/unifi"
 	v1 "k8s.io/api/core/v1"
@@ -55,11 +56,11 @@ func TestMultiPortService_ValidAnnotation(t *testing.T) {
 		if !exists {
 			t.Errorf("Unexpected port name: %s", pc.Name)
 		}
-		if pc.DstPort != expectedPort {
-			t.Errorf("Expected external port %d for %s, got %d", expectedPort, portName, pc.DstPort)
+		if !pc.DstPort.Equal(ports.FromPort(expectedPort)) {
+			t.Errorf("Expected external port %d for %s, got %s", expectedPort, portName, pc.DstPort)
 		}
-		if pc.FwdPort != int(helpers.GetServicePortByName(service, portName).Port) {
-			t.Errorf("Expected internal port %d for %s, got %d", helpers.GetServicePortByName(service, portName).Port, portName, pc.FwdPort)
+		if !pc.FwdPort.Equal(ports.FromPort(int(helpers.GetServicePortByName(service, portName).Port))) {
+			t.Errorf("Expected internal port %d for %s, got %s", helpers.GetServicePortByName(service, portName).Port, portName, pc.FwdPort)
 		}
 	}
 }
@@ -211,8 +212,8 @@ func TestDefaultPortMapping(t *testing.T) {
 		portName := strings.TrimPrefix(pc.Name, "default/default-service:")
 		servicePort := helpers.GetServicePortByName(service, portName)
 
-		if pc.DstPort != int(servicePort.Port) {
-			t.Errorf("Expected external port %d for %s, got %d", servicePort.Port, portName, pc.DstPort)
+		if !pc.DstPort.Equal(ports.FromPort(int(servicePort.Port))) {
+			t.Errorf("Expected external port %d for %s, got %s", servicePort.Port, portName, pc.DstPort)
 		}
 	}
 }
@@ -322,7 +323,7 @@ func TestSyncPortTrackingWithRouterSelective_SyncWhenNotEmpty(t *testing.T) {
 	}
 
 	// Verify sync operation occurred (port tracking should be populated)
-	err = helpers.CheckPortConflict(80, "default/service")
+	err = helpers.CheckPortConflict(ports.FromPort(80), "default/service")
 	if err != nil {
 		t.Errorf("Expected port tracking to be populated after sync, got: %v", err)
 	}

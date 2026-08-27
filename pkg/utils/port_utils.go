@@ -2,47 +2,62 @@ package utils
 
 import (
 	"fmt"
+	"maps"
 	"sync"
+
+	"unifi-port-forward/pkg/ports"
 )
 
-// Port conflict detection and tracking
+// Port conflict detection and tracking.
+//
+// Tracking is per individual port rather than per spec: a rule claiming
+// 8000-8100 marks all 101 ports. That way a later rule asking for 8050 - or for
+// an overlapping range - is caught by a plain map lookup, with no interval
+// arithmetic at the call site.
 var (
 	usedExternalPorts = make(map[int]string) // port -> serviceKey
 	portMutex         sync.RWMutex
 )
 
-// CheckPortConflict checks if external port is already used by another service
-func CheckPortConflict(externalPort int, serviceKey string) error {
+// CheckPortConflict checks if any of the external ports are already used by another service
+func CheckPortConflict(externalPorts ports.Spec, serviceKey string) error {
 	portMutex.Lock()
 	defer portMutex.Unlock()
 
-	if existingService, exists := usedExternalPorts[externalPort]; exists {
-		if existingService != serviceKey {
-			return fmt.Errorf("external port %d already used by service %s", externalPort, existingService)
+	for _, port := range externalPorts.All() {
+		if existingService, exists := usedExternalPorts[port]; exists {
+			if existingService != serviceKey {
+				return fmt.Errorf("external port %d already used by service %s", port, existingService)
+			}
 		}
 	}
 	return nil
 }
 
-// markPortUsed marks an external port as used by a service
-func markPortUsed(externalPort int, serviceKey string) {
+// markPortsUsed marks external ports as used by a service
+func markPortsUsed(externalPorts ports.Spec, serviceKey string) {
 	portMutex.Lock()
 	defer portMutex.Unlock()
 
-	usedExternalPorts[externalPort] = serviceKey
+	for _, port := range externalPorts.All() {
+		usedExternalPorts[port] = serviceKey
+	}
 }
 
-// MarkPortUsed marks an external port as used by a service (exported)
-func MarkPortUsed(externalPort int, serviceKey string) {
-	markPortUsed(externalPort, serviceKey)
+// MarkPortUsed marks external ports as used by a service (exported)
+func MarkPortUsed(externalPorts ports.Spec, serviceKey string) {
+	markPortsUsed(externalPorts, serviceKey)
 }
 
-// UnmarkPortUsed removes external port from tracking (exported for use by controller)
+// UnmarkPortUsed removes external ports from tracking (exported for use by controller)
 // This function is called during service deletion to free up external ports for reuse
-func UnmarkPortUsed(externalPort int) {
+func UnmarkPortUsed(externalPorts ports.Spec) {
 	portMutex.Lock()
 	defer portMutex.Unlock()
-	delete(usedExternalPorts, externalPort)
+
+	for _, port := range externalPorts.All() {
+		delete(usedExternalPorts, port)
+	}
 }
 
 // ResetPortTracking clears all external port tracking (for testing)
@@ -80,11 +95,7 @@ func GetUsedExternalPorts() map[int]string {
 	defer portMutex.RUnlock()
 
 	// Return a copy to prevent race conditions
-	copy := make(map[int]string)
-	for k, v := range usedExternalPorts {
-		copy[k] = v
-	}
-	return copy
+	return maps.Clone(usedExternalPorts)
 }
 
 // GetPortMutex returns the port mutex for external coordination

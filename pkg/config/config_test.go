@@ -1,8 +1,10 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -336,4 +338,99 @@ func findSubstring(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+func TestConfig_DebugFromEnv(t *testing.T) {
+	tests := []struct {
+		value string
+		want  bool
+	}{
+		{value: "true", want: true},
+		{value: "True", want: true},
+		{value: "1", want: true},
+		{value: "t", want: true},
+
+		// The shipped manifest used "False"; the previous implementation read any
+		// non-empty value as true and switched debug logging on.
+		{value: "false", want: false},
+		{value: "False", want: false},
+		{value: "FALSE", want: false},
+		{value: "0", want: false},
+
+		// Unparseable values are ignored rather than fatal, leaving the default.
+		{value: "yes", want: false},
+		{value: "nonsense", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.value, func(t *testing.T) {
+			t.Setenv("DEBUG", tt.value)
+
+			config := &Config{}
+			InitFromEnv(config)
+
+			if config.Debug != tt.want {
+				t.Errorf("DEBUG=%q gave Debug=%v, want %v", tt.value, config.Debug, tt.want)
+			}
+		})
+	}
+}
+
+func TestConfig_DebugUnsetLeavesValueAlone(t *testing.T) {
+	t.Setenv("DEBUG", "")
+
+	config := &Config{Debug: true}
+	InitFromEnv(config)
+
+	if !config.Debug {
+		t.Error("an unset DEBUG should not clear an already-enabled Debug")
+	}
+}
+
+func TestConfig_ValidateAcceptsAPIKeyWithoutPassword(t *testing.T) {
+	config := &Config{
+		RouterIP:     "192.168.1.1",
+		APIKey:       "an-api-key",
+		Site:         "default",
+		SyncInterval: 15 * time.Minute,
+	}
+
+	if err := config.Validate(); err != nil {
+		t.Errorf("an API key alone should be valid, got: %v", err)
+	}
+}
+
+func TestConfig_SecretsAreNotSerialized(t *testing.T) {
+	config := &Config{
+		RouterIP: "192.168.1.1",
+		Username: "admin",
+		Password: "hunter2",
+		APIKey:   "an-api-key",
+	}
+
+	encoded, err := json.Marshal(config)
+	if err != nil {
+		t.Fatalf("Marshal returned error: %v", err)
+	}
+
+	for _, secret := range []string{"hunter2", "an-api-key"} {
+		if strings.Contains(string(encoded), secret) {
+			t.Errorf("marshalled config leaked a credential: %s", encoded)
+		}
+	}
+}
+
+func TestConfig_HostFollowsRouterIPChange(t *testing.T) {
+	// Load derives Host once. Anything that changes RouterIP afterwards - such as
+	// a CLI flag override - has to re-derive, or the controller connects to the
+	// previous address.
+	config := &Config{}
+	config.Load()
+
+	config.RouterIP = "10.0.0.1"
+	config.SetDerivedValues()
+
+	if config.Host != "https://10.0.0.1" {
+		t.Errorf("Host = %q, want https://10.0.0.1", config.Host)
+	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 )
 
@@ -18,7 +19,7 @@ func TestPortForwardRule_ValidateCreate(t *testing.T) {
 			name: "valid rule with service reference",
 			rule: &PortForwardRule{
 				Spec: PortForwardRuleSpec{
-					ExternalPort:   8080,
+					ExternalPort:   intstr.FromInt32(8080),
 					Protocol:       "tcp",
 					Priority:       100,
 					ConflictPolicy: "warn",
@@ -34,12 +35,12 @@ func TestPortForwardRule_ValidateCreate(t *testing.T) {
 			name: "valid rule with destination IP",
 			rule: &PortForwardRule{
 				Spec: PortForwardRuleSpec{
-					ExternalPort:    8080,
+					ExternalPort:    intstr.FromInt32(8080),
 					Protocol:        "tcp",
 					Priority:        100,
 					ConflictPolicy:  "warn",
 					DestinationIP:   stringPtr("192.168.1.100"),
-					DestinationPort: intPtr(80),
+					DestinationPort: portPtr(80),
 				},
 			},
 			expectError: false,
@@ -48,7 +49,7 @@ func TestPortForwardRule_ValidateCreate(t *testing.T) {
 			name: "invalid external port too low",
 			rule: &PortForwardRule{
 				Spec: PortForwardRuleSpec{
-					ExternalPort:   0,
+					ExternalPort:   intstr.FromInt32(0),
 					Protocol:       "tcp",
 					Priority:       100,
 					ConflictPolicy: "warn",
@@ -65,7 +66,7 @@ func TestPortForwardRule_ValidateCreate(t *testing.T) {
 			name: "invalid external port too high",
 			rule: &PortForwardRule{
 				Spec: PortForwardRuleSpec{
-					ExternalPort:   65536,
+					ExternalPort:   intstr.FromInt32(65536),
 					Protocol:       "tcp",
 					Priority:       100,
 					ConflictPolicy: "warn",
@@ -82,7 +83,7 @@ func TestPortForwardRule_ValidateCreate(t *testing.T) {
 			name: "invalid protocol",
 			rule: &PortForwardRule{
 				Spec: PortForwardRuleSpec{
-					ExternalPort:   8080,
+					ExternalPort:   intstr.FromInt32(8080),
 					Protocol:       "invalid",
 					Priority:       100,
 					ConflictPolicy: "warn",
@@ -99,12 +100,12 @@ func TestPortForwardRule_ValidateCreate(t *testing.T) {
 			name: "invalid destination IP",
 			rule: &PortForwardRule{
 				Spec: PortForwardRuleSpec{
-					ExternalPort:    8080,
+					ExternalPort:    intstr.FromInt32(8080),
 					Protocol:        "tcp",
 					Priority:        100,
 					ConflictPolicy:  "warn",
 					DestinationIP:   stringPtr("invalid-ip"),
-					DestinationPort: intPtr(80),
+					DestinationPort: portPtr(80),
 				},
 			},
 			expectError: true,
@@ -114,7 +115,7 @@ func TestPortForwardRule_ValidateCreate(t *testing.T) {
 			name: "priority too low",
 			rule: &PortForwardRule{
 				Spec: PortForwardRuleSpec{
-					ExternalPort:   8080,
+					ExternalPort:   intstr.FromInt32(8080),
 					Protocol:       "tcp",
 					Priority:       -1,
 					ConflictPolicy: "warn",
@@ -131,7 +132,7 @@ func TestPortForwardRule_ValidateCreate(t *testing.T) {
 			name: "priority too high",
 			rule: &PortForwardRule{
 				Spec: PortForwardRuleSpec{
-					ExternalPort:   8080,
+					ExternalPort:   intstr.FromInt32(8080),
 					Protocol:       "tcp",
 					Priority:       1001,
 					ConflictPolicy: "warn",
@@ -148,7 +149,7 @@ func TestPortForwardRule_ValidateCreate(t *testing.T) {
 			name: "both service ref and destination IP",
 			rule: &PortForwardRule{
 				Spec: PortForwardRuleSpec{
-					ExternalPort:   8080,
+					ExternalPort:   intstr.FromInt32(8080),
 					Protocol:       "tcp",
 					Priority:       100,
 					ConflictPolicy: "warn",
@@ -166,7 +167,7 @@ func TestPortForwardRule_ValidateCreate(t *testing.T) {
 			name: "neither service ref nor destination IP",
 			rule: &PortForwardRule{
 				Spec: PortForwardRuleSpec{
-					ExternalPort:   8080,
+					ExternalPort:   intstr.FromInt32(8080),
 					Protocol:       "tcp",
 					Priority:       100,
 					ConflictPolicy: "warn",
@@ -179,7 +180,7 @@ func TestPortForwardRule_ValidateCreate(t *testing.T) {
 			name: "destination IP without destination port",
 			rule: &PortForwardRule{
 				Spec: PortForwardRuleSpec{
-					ExternalPort:   8080,
+					ExternalPort:   intstr.FromInt32(8080),
 					Protocol:       "tcp",
 					Priority:       100,
 					ConflictPolicy: "warn",
@@ -219,7 +220,7 @@ func TestPortForwardRule_ValidateCreate(t *testing.T) {
 func TestPortForwardRule_ValidateUpdate(t *testing.T) {
 	oldRule := &PortForwardRule{
 		Spec: PortForwardRuleSpec{
-			ExternalPort:   8080,
+			ExternalPort:   intstr.FromInt32(8080),
 			Protocol:       "tcp",
 			Priority:       100,
 			ConflictPolicy: "warn",
@@ -232,7 +233,7 @@ func TestPortForwardRule_ValidateUpdate(t *testing.T) {
 
 	newRule := &PortForwardRule{
 		Spec: PortForwardRuleSpec{
-			ExternalPort:   0, // Invalid to trigger validation
+			ExternalPort:   intstr.FromInt32(0), // Invalid to trigger validation
 			Protocol:       "udp",
 			Priority:       200,
 			ConflictPolicy: "error",
@@ -254,7 +255,7 @@ func TestPortForwardRule_ValidateUpdate(t *testing.T) {
 func TestPortForwardRule_ValidateDelete(t *testing.T) {
 	rule := &PortForwardRule{
 		Spec: PortForwardRuleSpec{
-			ExternalPort:   8080,
+			ExternalPort:   intstr.FromInt32(8080),
 			Protocol:       "tcp",
 			Priority:       100,
 			ConflictPolicy: "warn",
@@ -368,7 +369,7 @@ func TestValidateServiceRef(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			rule := &PortForwardRule{
 				Spec: PortForwardRuleSpec{
-					ExternalPort:   8080,
+					ExternalPort:   intstr.FromInt32(8080),
 					Protocol:       "tcp",
 					Priority:       100,
 					ConflictPolicy: "warn",
@@ -451,7 +452,7 @@ func TestValidateMutuallyExclusiveFields(t *testing.T) {
 			name: "service ref only",
 			rule: &PortForwardRule{
 				Spec: PortForwardRuleSpec{
-					ExternalPort:   8080,
+					ExternalPort:   intstr.FromInt32(8080),
 					Protocol:       "tcp",
 					Priority:       100,
 					ConflictPolicy: "warn",
@@ -467,12 +468,12 @@ func TestValidateMutuallyExclusiveFields(t *testing.T) {
 			name: "destination IP with port",
 			rule: &PortForwardRule{
 				Spec: PortForwardRuleSpec{
-					ExternalPort:    8080,
+					ExternalPort:    intstr.FromInt32(8080),
 					Protocol:        "tcp",
 					Priority:        100,
 					ConflictPolicy:  "warn",
 					DestinationIP:   stringPtr("192.168.1.100"),
-					DestinationPort: intPtr(80),
+					DestinationPort: portPtr(80),
 				},
 			},
 			expectError: false,
@@ -481,7 +482,7 @@ func TestValidateMutuallyExclusiveFields(t *testing.T) {
 			name: "both service ref and destination IP",
 			rule: &PortForwardRule{
 				Spec: PortForwardRuleSpec{
-					ExternalPort:   8080,
+					ExternalPort:   intstr.FromInt32(8080),
 					Protocol:       "tcp",
 					Priority:       100,
 					ConflictPolicy: "warn",
@@ -499,7 +500,7 @@ func TestValidateMutuallyExclusiveFields(t *testing.T) {
 			name: "neither service ref nor destination IP",
 			rule: &PortForwardRule{
 				Spec: PortForwardRuleSpec{
-					ExternalPort:   8080,
+					ExternalPort:   intstr.FromInt32(8080),
 					Protocol:       "tcp",
 					Priority:       100,
 					ConflictPolicy: "warn",
@@ -512,7 +513,7 @@ func TestValidateMutuallyExclusiveFields(t *testing.T) {
 			name: "destination IP without port",
 			rule: &PortForwardRule{
 				Spec: PortForwardRuleSpec{
-					ExternalPort:   8080,
+					ExternalPort:   intstr.FromInt32(8080),
 					Protocol:       "tcp",
 					Priority:       100,
 					ConflictPolicy: "warn",
@@ -544,7 +545,7 @@ func TestPortForwardRule_ValidateCrossNamespacePortConflict(t *testing.T) {
 	// For now, we'll test that the method doesn't panic with nil input
 	rule := &PortForwardRule{
 		Spec: PortForwardRuleSpec{
-			ExternalPort:   8080,
+			ExternalPort:   intstr.FromInt32(8080),
 			Protocol:       "tcp",
 			Priority:       100,
 			ConflictPolicy: "warn",
@@ -603,6 +604,7 @@ func stringPtr(s string) *string {
 	return &s
 }
 
-func intPtr(i int) *int {
-	return &i
+func portPtr(port int) *intstr.IntOrString {
+	value := intstr.FromInt32(int32(port))
+	return &value
 }

@@ -2,8 +2,8 @@ package helpers
 
 import (
 	"context"
-	"strconv"
 
+	"unifi-port-forward/pkg/ports"
 	"unifi-port-forward/pkg/routers"
 	"unifi-port-forward/pkg/utils"
 
@@ -19,14 +19,14 @@ func GetLBIP(service *v1.Service) string {
 }
 
 // GetPortConfigs creates multiple PortConfigs from a service using utils package
-func GetPortConfigs(service *v1.Service, lbIP string, annotationKey string) ([]routers.PortConfig, error) {
-	return utils.GetPortConfigs(service, lbIP, annotationKey)
+func GetPortConfigs(service *v1.Service, destIP string, annotationKey string) ([]routers.PortConfig, error) {
+	return utils.GetPortConfigs(service, destIP, annotationKey)
 }
 
-// UnmarkPortUsed removes external port from tracking using utils package
+// UnmarkPortUsed removes external ports from tracking using utils package
 // This function is called during service deletion to free up external ports for reuse
-func UnmarkPortUsed(externalPort int) {
-	utils.UnmarkPortUsed(externalPort)
+func UnmarkPortUsed(externalPorts ports.Spec) {
+	utils.UnmarkPortUsed(externalPorts)
 }
 
 // ClearPortConflictTracking clears all port tracking using utils package
@@ -103,9 +103,9 @@ func SyncPortTrackingWithRouterSelective(ctx context.Context, router routers.Rou
 			// Rule follows controller naming, mark as used
 			managedCount++
 			serviceKey := utils.ExtractServiceKeyFromRuleName(rule.Name)
-			// Parse the external port and mark it as used
-			if externalPort, err := strconv.Atoi(rule.DstPort); err == nil {
-				markPortUsed(externalPort, serviceKey)
+			// Parse the external port spec and mark every port it covers as used
+			if externalPorts := ports.ParseOrEmpty(rule.DstPort); !externalPorts.IsEmpty() {
+				markPortUsed(externalPorts, serviceKey)
 			}
 		} else {
 			// Manual rule - skip from tracking to allow managed rules to use these ports
@@ -157,15 +157,15 @@ func IsPortForwardRuleCRDAvailable(ctx context.Context, restConfig *rest.Config,
 
 // Port conflict tracking functions - delegates to utils package
 
-// CheckPortConflict checks if a port conflicts with existing ports using utils package
-func CheckPortConflict(externalPort int, serviceKey string) error {
-	return utils.CheckPortConflict(externalPort, serviceKey)
+// CheckPortConflict checks if ports conflict with existing ports using utils package
+func CheckPortConflict(externalPorts ports.Spec, serviceKey string) error {
+	return utils.CheckPortConflict(externalPorts, serviceKey)
 }
 
-// markPortUsed marks a port as used by a specific service using utils package
-func markPortUsed(externalPort int, serviceKey string) {
+// markPortUsed marks ports as used by a specific service using utils package
+func markPortUsed(externalPorts ports.Spec, serviceKey string) {
 	// Access the unexported function through utils package by calling the exported MarkPortUsed
-	utils.MarkPortUsed(externalPort, serviceKey)
+	utils.MarkPortUsed(externalPorts, serviceKey)
 }
 
 // UnmarkPortsForService removes all port tracking for a specific service using utils package

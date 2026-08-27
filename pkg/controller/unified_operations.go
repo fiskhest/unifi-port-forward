@@ -3,11 +3,11 @@ package controller
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"strings"
 
 	"unifi-port-forward/pkg/config"
 	"unifi-port-forward/pkg/helpers"
+	"unifi-port-forward/pkg/ports"
 	"unifi-port-forward/pkg/routers"
 
 	"github.com/filipowm/go-unifi/unifi"
@@ -15,21 +15,13 @@ import (
 	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
 )
 
-// strToInt converts string to int with fallback to 0
-func strToInt(s string) int {
-	if i, err := strconv.Atoi(s); err == nil {
-		return i
-	}
-	return 0
-}
-
 // determineMismatchType identifies the type of mismatch between existing and desired rules
 func determineMismatchType(existingRule *unifi.PortForward, desiredConfig routers.PortConfig, changeContext *ChangeContext) string {
 	// Check for risky changes first (delete-then-recreate)
-	if existingRule.FwdPort != strconv.Itoa(desiredConfig.FwdPort) {
+	if !ports.ParseOrEmpty(existingRule.FwdPort).Equal(desiredConfig.FwdPort) {
 		return "fwdport"
 	}
-	if existingRule.DstPort != strconv.Itoa(desiredConfig.DstPort) {
+	if !ports.ParseOrEmpty(existingRule.DstPort).Equal(desiredConfig.DstPort) {
 		return "port"
 	}
 	if existingRule.Proto != desiredConfig.Protocol {
@@ -68,9 +60,12 @@ Port Key Format Documentation:
 This file uses a consistent key format: "dstPort-fwdPort-protocol" (e.g., "8080-8081-tcp")
 
 Key format ensures uniqueness by including all three components:
-- dstPort: External port number
-- fwdPort: Internal port number
+- dstPort: External port spec ("8080", "8000-8100" or "80,443")
+- fwdPort: Internal port spec
 - protocol: TCP/UDP
+
+Port specs are normalized before they go into a key, so "80,81" and "80-81"
+produce the same key whichever way the router or the user happened to write them.
 
 UniFi port forward rules are uniquely identified by the combination of
 DstPort + FwdPort + Protocol. This is critical because:
@@ -81,6 +76,31 @@ DstPort + FwdPort + Protocol. This is critical because:
 This allows accurate comparison between desired state and current router state,
 and ensures proper detection of drift including FwdPort changes.
 */
+
+// portKey builds the "dstPort-fwdPort-protocol" identity key for a desired config.
+func portKey(dst, fwd ports.Spec, protocol string) string {
+	return fmt.Sprintf("%s-%s-%s", dst, fwd, protocol)
+}
+
+// rulePortKey builds the same key from a router rule, normalizing its port specs
+// so that router-side formatting differences don't read as drift.
+func rulePortKey(rule *unifi.PortForward) string {
+	return portKey(ports.ParseOrEmpty(rule.DstPort), ports.ParseOrEmpty(rule.FwdPort), rule.Proto)
+}
+
+// configFromRule rebuilds a PortConfig from a rule that already exists on the router.
+func configFromRule(rule *unifi.PortForward) routers.PortConfig {
+	return routers.PortConfig{
+		Name:      rule.Name,
+		DstPort:   ports.ParseOrEmpty(rule.DstPort),
+		FwdPort:   ports.ParseOrEmpty(rule.FwdPort),
+		DstIP:     rule.Fwd,
+		Protocol:  rule.Proto,
+		Enabled:   rule.Enabled,
+		Interface: rule.PfwdInterface,
+		SrcIP:     rule.Src,
+	}
+}
 
 // OperationType represents the type of port operation
 type OperationType string
@@ -111,11 +131,11 @@ type OperationResult struct {
 func (op PortOperation) String() string {
 	switch op.Type {
 	case OpCreate:
-		return fmt.Sprintf("CREATE rule port %d → %s:%d (%s)", op.Config.DstPort, op.Config.DstIP, op.Config.FwdPort, op.Config.Protocol)
+		return fmt.Sprintf("CREATE rule port %s → %s:%s (%s)", op.Config.DstPort, op.Config.DstIP, op.Config.FwdPort, op.Config.Protocol)
 	case OpUpdate:
-		return fmt.Sprintf("UPDATE rule port %d → %s:%d (%s)", op.Config.DstPort, op.Config.DstIP, op.Config.FwdPort, op.Config.Protocol)
+		return fmt.Sprintf("UPDATE rule port %s → %s:%s (%s)", op.Config.DstPort, op.Config.DstIP, op.Config.FwdPort, op.Config.Protocol)
 	case OpDelete:
-		return fmt.Sprintf("DELETE rule port %d (%s)", op.Config.DstPort, op.Config.Protocol)
+		return fmt.Sprintf("DELETE rule port %s (%s)", op.Config.DstPort, op.Config.Protocol)
 	default:
 		return fmt.Sprintf("UNKNOWN operation: %s", op.Type)
 	}
@@ -141,8 +161,7 @@ func (r *PortForwardReconciler) calculateDelta(currentRules []*unifi.PortForward
 	// This prevents generating duplicate CREATE operations for ports that will be updated
 	conflictPorts := make(map[string]bool)
 	for _, op := range conflictOperations {
-		portKey := fmt.Sprintf("%d-%d-%s", op.Config.DstPort, op.Config.FwdPort, op.Config.Protocol)
-		conflictPorts[portKey] = true
+		conflictPorts[portKey(op.Config.DstPort, op.Config.FwdPort, op.Config.Protocol)] = true
 	}
 
 	// Build maps for efficient lookup
@@ -150,8 +169,7 @@ func (r *PortForwardReconciler) calculateDelta(currentRules []*unifi.PortForward
 	// This key format ensures uniqueness for port forward rules and matches router state format
 	desiredMap := make(map[string]routers.PortConfig)
 	for _, config := range desiredConfigs {
-		portKey := fmt.Sprintf("%d-%d-%s", config.DstPort, config.FwdPort, config.Protocol)
-		desiredMap[portKey] = config
+		desiredMap[portKey(config.DstPort, config.FwdPort, config.Protocol)] = config
 	}
 
 	// Build map of current rules using same key format
@@ -162,27 +180,16 @@ func (r *PortForwardReconciler) calculateDelta(currentRules []*unifi.PortForward
 		if helpers.RuleBelongsToService(rule.Name, service.Namespace, service.Name) {
 			// Use same key format as desiredMap for proper comparison
 			// This ensures we can accurately compare desired vs current router state
-			portKey := fmt.Sprintf("%s-%s-%s", rule.DstPort, rule.FwdPort, rule.Proto)
-			currentMap[portKey] = rule
+			currentMap[rulePortKey(rule)] = rule
 		}
 	}
 
 	// Find deletions (exist in current but not desired)
-	for portKey, rule := range currentMap {
-		if _, desired := desiredMap[portKey]; !desired {
-			dstPort := strToInt(rule.DstPort)
+	for key, rule := range currentMap {
+		if _, desired := desiredMap[key]; !desired {
 			operations = append(operations, PortOperation{
-				Type: OpDelete,
-				Config: routers.PortConfig{
-					Name:      rule.Name,
-					DstPort:   dstPort,
-					FwdPort:   strToInt(rule.FwdPort),
-					DstIP:     rule.Fwd,
-					Protocol:  rule.Proto,
-					Enabled:   rule.Enabled,
-					Interface: rule.PfwdInterface,
-					SrcIP:     rule.Src,
-				},
+				Type:         OpDelete,
+				Config:       configFromRule(rule),
 				ExistingRule: rule,
 				Reason:       "port_no_longer_desired",
 			})
@@ -190,14 +197,14 @@ func (r *PortForwardReconciler) calculateDelta(currentRules []*unifi.PortForward
 	}
 
 	// Find creations and updates
-	for portKey, desiredConfig := range desiredMap {
+	for key, desiredConfig := range desiredMap {
 		// Skip ports that are already being handled by conflict operations
 		// This prevents duplicate CREATE operations for ports that will be updated via conflict resolution
-		if conflictPorts[portKey] {
+		if conflictPorts[key] {
 			continue
 		}
 
-		if existingRule, exists := currentMap[portKey]; !exists {
+		if existingRule, exists := currentMap[key]; !exists {
 			// Port configuration (dstPort/fwdPort/protocol) doesn't match any existing rule
 			// This requires CREATE operation because UniFi UpdatePort API cannot change port numbers
 			operations = append(operations, PortOperation{
@@ -222,18 +229,8 @@ func (r *PortForwardReconciler) calculateDelta(currentRules []*unifi.PortForward
 				} else {
 					// Risky change: delete then recreate
 					operations = append(operations, PortOperation{
-						Type: OpDelete,
-						Config: routers.PortConfig{
-							// Copy from current rule for deletion
-							Name:      existingRule.Name,
-							DstPort:   helpers.ParseIntField(existingRule.DstPort),
-							FwdPort:   helpers.ParseIntField(existingRule.FwdPort),
-							DstIP:     existingRule.Fwd,
-							Protocol:  existingRule.Proto,
-							Enabled:   existingRule.Enabled,
-							Interface: existingRule.PfwdInterface,
-							SrcIP:     existingRule.Src,
-						},
+						Type:         OpDelete,
+						Config:       configFromRule(existingRule), // Copy from current rule for deletion
 						ExistingRule: existingRule,
 						Reason:       "configuration_mismatch_delete",
 					})
@@ -334,16 +331,7 @@ func (r *PortForwardReconciler) rollbackOperations(ctx context.Context, operatio
 		case OpUpdate:
 			// Updated operation -> rollback by updating back
 			if op.ExistingRule != nil {
-				rollbackConfig := routers.PortConfig{
-					Name:      op.ExistingRule.Name,
-					DstPort:   strToInt(op.ExistingRule.DstPort),
-					FwdPort:   strToInt(op.ExistingRule.FwdPort),
-					DstIP:     op.ExistingRule.Fwd,
-					Protocol:  op.ExistingRule.Proto,
-					Enabled:   op.ExistingRule.Enabled,
-					Interface: op.ExistingRule.PfwdInterface,
-					SrcIP:     op.ExistingRule.Src,
-				}
+				rollbackConfig := configFromRule(op.ExistingRule)
 				err = r.Router.UpdatePort(ctx, op.Config.DstPort, rollbackConfig)
 				// If UpdatePort fails with "not found", convert to CREATE instead
 				if err != nil && strings.Contains(err.Error(), "not found") {
@@ -459,14 +447,14 @@ func (r *PortForwardReconciler) rollbackCleanupOperations(ctx context.Context, o
 }
 
 // calculateDesiredState generates the desired port configurations for a service
-func (r *PortForwardReconciler) calculateDesiredState(service *corev1.Service) ([]routers.PortConfig, error) {
-	lbIP := helpers.GetLBIP(service)
-	if lbIP == "" {
-		return nil, fmt.Errorf("service has no LoadBalancer IP")
+func (r *PortForwardReconciler) calculateDesiredState(ctx context.Context, service *corev1.Service) ([]routers.PortConfig, error) {
+	dest, err := resolveServiceDestination(ctx, r.Client, service)
+	if err != nil {
+		return nil, err
 	}
 
 	// Get port configurations from annotations
-	portConfigs, err := helpers.GetPortConfigs(service, lbIP, config.FilterAnnotation)
+	portConfigs, err := helpers.GetPortConfigs(service, dest.IP, config.FilterAnnotation)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get port configurations: %w", err)
 	}
@@ -483,8 +471,7 @@ func (r *PortForwardReconciler) detectPortConflicts(currentRules []*unifi.PortFo
 	// This ensures we only detect true conflicts where both external and internal ports match
 	desiredMap := make(map[string]routers.PortConfig)
 	for _, config := range desiredConfigs {
-		portKey := fmt.Sprintf("%d-%d-%s", config.DstPort, config.FwdPort, config.Protocol)
-		desiredMap[portKey] = config
+		desiredMap[portKey(config.DstPort, config.FwdPort, config.Protocol)] = config
 	}
 
 	// If no desired configs, no conflicts can exist (deletion-only scenario)
@@ -494,8 +481,8 @@ func (r *PortForwardReconciler) detectPortConflicts(currentRules []*unifi.PortFo
 
 	// Check each current rule for conflicts
 	for _, rule := range currentRules {
-		dstPort := strToInt(rule.DstPort)
-		fwdPort := strToInt(rule.FwdPort)
+		dstPort := ports.ParseOrEmpty(rule.DstPort)
+		fwdPort := ports.ParseOrEmpty(rule.FwdPort)
 
 		// Skip if this rule is already owned by this service
 		if helpers.RuleBelongsToService(rule.Name, service.Namespace, service.Name) {
@@ -504,8 +491,7 @@ func (r *PortForwardReconciler) detectPortConflicts(currentRules []*unifi.PortFo
 
 		// Check if this exact port configuration conflicts with our desired rules
 		// Use same key format as calculateDelta for consistency: dstPort-fwdPort-protocol
-		portKey := fmt.Sprintf("%d-%d-%s", dstPort, fwdPort, rule.Proto)
-		if desiredConfig, conflict := desiredMap[portKey]; conflict {
+		if desiredConfig, conflict := desiredMap[rulePortKey(rule)]; conflict {
 			// Found a true conflict - both external and internal ports match
 			// But only generate UPDATE if the existing rule actually exists and can be updated
 			if rule.ID != "" {

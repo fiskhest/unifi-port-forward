@@ -8,7 +8,7 @@
 #   just test     # Run tests
 #   just lint     # Run linter
 #   just fmt      # Check formatting
-#   just build    # docker build
+#   just build    # docker buildx bake --push (set REGISTRY to retarget)
 
 # =============================================================================
 # Configuration
@@ -58,6 +58,13 @@ alias b := build
 @check: test lint fmt
     echo "✅ All checks passed!"
 
-# Do docker build
+# Build and push the container image
+#
+# The image name comes from the REGISTRY variable in docker-bake.hcl, which is
+# overridable from the environment. Set REGISTRY in your shell or in a local
+# .env (loaded above) to publish to your own namespace instead of upstream's:
+#
+#   REGISTRY=ghcr.io/you/unifi-port-forward just build
 @build:
-    docker build --push -t ghcr.io/fiskhest/unifi-port-forward .
+    echo "🐳 Building and pushing container image..."
+    docker buildx bake --push

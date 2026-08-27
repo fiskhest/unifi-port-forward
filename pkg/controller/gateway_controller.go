@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"unifi-port-forward/pkg/config"
+	"unifi-port-forward/pkg/ports"
 	"unifi-port-forward/pkg/routers"
 
 	corev1 "k8s.io/api/core/v1"
@@ -139,18 +140,21 @@ func (r *GatewayReconciler) resolveGatewayAddress(ctx context.Context, gateway *
 
 type portMapping struct {
 	Protocol string
-	Port     int
+	Ports    ports.Spec
 }
 
+// parseGatewayMappingAnnotation parses "TCP:80,UDP:53" style annotations. The
+// port side may also be an inclusive range ("TCP:8000-8100"). Commas already
+// separate mappings, so a port list is written as repeated entries -
+// "TCP:80,TCP:443" - which yields one rule per entry.
 func parseGatewayMappingAnnotation(mapping string) ([]portMapping, error) {
 	if mapping == "" {
 		return nil, fmt.Errorf("empty mapping")
 	}
 
 	var mappings []portMapping
-	parts := strings.Split(mapping, ",")
 
-	for _, part := range parts {
+	for part := range strings.SplitSeq(mapping, ",") {
 		part = strings.TrimSpace(part)
 		if part == "" {
 			continue
@@ -162,19 +166,15 @@ func parseGatewayMappingAnnotation(mapping string) ([]portMapping, error) {
 		}
 
 		protocol := strings.ToUpper(strings.TrimSpace(kv[0]))
-		portStr := strings.TrimSpace(kv[1])
 
-		var port int
-		if _, err := fmt.Sscanf(portStr, "%d", &port); err != nil {
-			return nil, fmt.Errorf("invalid port number: %s", portStr)
-		}
-		if port < 1 || port > 65535 {
-			return nil, fmt.Errorf("port out of range: %d", port)
+		portSpec, err := ports.Parse(strings.TrimSpace(kv[1]))
+		if err != nil {
+			return nil, fmt.Errorf("invalid port in mapping %q: %w", part, err)
 		}
 
 		mappings = append(mappings, portMapping{
 			Protocol: protocol,
-			Port:     port,
+			Ports:    portSpec,
 		})
 	}
 
@@ -199,13 +199,14 @@ func (r *GatewayReconciler) reconcileGatewayPortForwards(ctx context.Context, ga
 		return err
 	}
 
-	usedPorts := make(map[int]bool)
+	usedPorts := make(map[string]bool)
 	for _, m := range mappings {
-		if usedPorts[m.Port] {
-			logger.V(1).Info("Port already processed, skipping duplicate", "port", m.Port)
+		key := m.Ports.String()
+		if usedPorts[key] {
+			logger.V(1).Info("Port already processed, skipping duplicate", "port", m.Ports)
 			continue
 		}
-		usedPorts[m.Port] = true
+		usedPorts[key] = true
 
 		protocol := "tcp"
 		if m.Protocol == "UDP" {
@@ -213,17 +214,17 @@ func (r *GatewayReconciler) reconcileGatewayPortForwards(ctx context.Context, ga
 		}
 
 		routerRule := routers.PortConfig{
-			Name:      fmt.Sprintf("%s/%s-%d", gateway.Name, strings.ToLower(m.Protocol), m.Port),
+			Name:      fmt.Sprintf("%s/%s-%s", gateway.Name, strings.ToLower(m.Protocol), m.Ports),
 			Enabled:   true,
 			Interface: "wan",
-			DstPort:   m.Port,
-			FwdPort:   m.Port,
+			DstPort:   m.Ports,
+			FwdPort:   m.Ports,
 			SrcIP:     "any",
 			DstIP:     dstIP,
 			Protocol:  protocol,
 		}
 
-		existingRule, exists, checkErr := r.Router.CheckPort(ctx, m.Port, protocol)
+		existingRule, exists, checkErr := r.Router.CheckPort(ctx, m.Ports, protocol)
 		if checkErr != nil {
 			logger.Error(checkErr, "Failed to check existing router rule")
 			continue
@@ -242,16 +243,16 @@ func (r *GatewayReconciler) reconcileGatewayPortForwards(ctx context.Context, ga
 
 			if needsUpdate {
 				logger.Info("Updating existing port forward rule",
-					"port", m.Port, "protocol", protocol,
+					"port", m.Ports, "protocol", protocol,
 					"existingName", existingRule.Name, "newName", routerRule.Name)
-				if err := r.Router.UpdatePort(ctx, m.Port, routerRule); err != nil {
+				if err := r.Router.UpdatePort(ctx, m.Ports, routerRule); err != nil {
 					logger.Error(err, "Failed to update router rule")
 					continue
 				}
 			}
 		} else {
 			logger.Info("Creating new port forward rule",
-				"port", m.Port, "protocol", protocol, "dstIP", dstIP)
+				"port", m.Ports, "protocol", protocol, "dstIP", dstIP)
 			if err := r.Router.AddPort(ctx, routerRule); err != nil {
 				logger.Error(err, "Failed to create router rule")
 				continue
@@ -282,9 +283,9 @@ func (r *GatewayReconciler) deleteGatewayPortForwards(ctx context.Context, gatew
 			protocol = "udp"
 		}
 
-		ruleName := fmt.Sprintf("%s/%s-%d", gateway.Name, strings.ToLower(m.Protocol), m.Port)
+		ruleName := fmt.Sprintf("%s/%s-%d", gateway.Name, strings.ToLower(m.Protocol), m.Ports)
 
-		existingRule, exists, checkErr := r.Router.CheckPort(ctx, m.Port, protocol)
+		existingRule, exists, checkErr := r.Router.CheckPort(ctx, m.Ports, protocol)
 		if checkErr != nil {
 			logger.Error(checkErr, "Failed to check router rule for deletion")
 			continue
@@ -302,7 +303,7 @@ func (r *GatewayReconciler) deleteGatewayPortForwards(ctx context.Context, gatew
 		}
 
 		logger.Info("Deleting port forward rule",
-			"port", m.Port, "protocol", protocol, "ruleID", existingRule.ID)
+			"port", m.Ports, "protocol", protocol, "ruleID", existingRule.ID)
 		if err := r.Router.DeletePortForwardByID(ctx, existingRule.ID); err != nil {
 			logger.Error(err, "Failed to delete router rule")
 			return err

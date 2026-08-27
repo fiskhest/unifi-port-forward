@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"unifi-port-forward/pkg/ports"
+
 	"github.com/filipowm/go-unifi/unifi"
 
 	corev1 "k8s.io/api/core/v1"
@@ -179,11 +181,11 @@ func TestDriftDetector_FwdPortChangeDetection(t *testing.T) {
 
 	// Check missing rule (desired config not in router)
 	missingRule := analysis.MissingRules[0]
-	if missingRule.DstPort != 8080 {
-		t.Errorf("Expected missing rule DstPort 8080, got %d", missingRule.DstPort)
+	if !missingRule.DstPort.Equal(ports.FromPort(8080)) {
+		t.Errorf("Expected missing rule DstPort 8080, got %s", missingRule.DstPort)
 	}
-	if missingRule.FwdPort != 3001 {
-		t.Errorf("Expected missing rule FwdPort 3001, got %d", missingRule.FwdPort)
+	if !missingRule.FwdPort.Equal(ports.FromPort(3001)) {
+		t.Errorf("Expected missing rule FwdPort 3001, got %s", missingRule.FwdPort)
 	}
 
 	// Check extra rule (router has old config)

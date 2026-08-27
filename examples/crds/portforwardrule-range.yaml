@@ -1,0 +1,54 @@
+###
+### externalPort accepts a bare number, an inclusive range, or a comma-separated
+### list of either. Ranges and lists must be quoted so they parse as strings.
+###
+### With serviceRef, the destination IP and internal ports are both resolved from
+### the Service - there is no destinationPort to set. A contiguous external range
+### maps onto a same-sized range starting at the service port.
+---
+apiVersion: unifi-port-forward.fiskhe.st/v1alpha1
+kind: PortForwardRule
+metadata:
+  name: game-server-udp
+  namespace: default
+spec:
+  externalPort: "27015-27020"
+  protocol: udp
+  serviceRef:
+    name: game-server
+    port: game
+  enabled: true
+  description: "Game server UDP port range"
+  interface: "wan"
+---
+### A standalone rule for a host outside the cluster. destinationPort must either
+### be a single port - every external port is forwarded to it - or cover exactly
+### as many ports as externalPort, mapped in ascending order.
+apiVersion: unifi-port-forward.fiskhe.st/v1alpha1
+kind: PortForwardRule
+metadata:
+  name: passive-ftp
+  namespace: default
+spec:
+  externalPort: "50000-50100"
+  protocol: tcp
+  destinationIP: "192.168.1.100"
+  destinationPort: "50000-50100"
+  enabled: true
+  description: "Passive FTP data ports"
+  interface: "wan"
+---
+### A port list: WAN 80 and 443 both forwarded to a single internal port.
+apiVersion: unifi-port-forward.fiskhe.st/v1alpha1
+kind: PortForwardRule
+metadata:
+  name: web-alt-ports
+  namespace: default
+spec:
+  externalPort: "80,443"
+  protocol: tcp
+  destinationIP: "192.168.1.101"
+  destinationPort: 8443
+  enabled: true
+  description: "HTTP and HTTPS collapsed onto one backend port"
+  interface: "wan"

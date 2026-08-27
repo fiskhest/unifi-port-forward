@@ -4,33 +4,44 @@
 package v1alpha1
 
 import (
+	"fmt"
+
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
+
+	"unifi-port-forward/pkg/ports"
 )
 
 // PortForwardRuleSpec defines the desired state of PortForwardRule
 type PortForwardRuleSpec struct {
-	// ExternalPort is the WAN port to forward
-	// +kubebuilder:validation:Minimum=1
-	// +kubebuilder:validation:Maximum=65535
+	// ExternalPort is the WAN port, port range or port list to forward.
+	// Accepts a bare number (8080), an inclusive range ("8000-8100"), or a
+	// comma-separated list of either ("80,443,8000-8100"). UniFi accepts at
+	// most 15 comma-separated elements.
+	// +kubebuilder:validation:XIntOrString
 	// +kubebuilder:required
-	ExternalPort int `json:"externalPort"`
+	ExternalPort intstr.IntOrString `json:"externalPort"`
 
 	// Protocol specifies the forwarding protocol
 	// +kubebuilder:validation:Enum=tcp;udp;both
 	// +kubebuilder:default=tcp
 	Protocol string `json:"protocol,omitempty"`
 
-	// ServiceRef references a Service for destination (mutually exclusive with DestinationIP)
+	// ServiceRef references a Service for destination (mutually exclusive with DestinationIP).
+	// The destination IP and port are both resolved from the Service, so
+	// DestinationPort is neither needed nor used alongside it.
 	ServiceRef *ServiceReference `json:"serviceRef,omitempty"`
 
 	// DestinationIP is the target IP address (mutually exclusive with ServiceRef)
 	// +kubebuilder:validation:Format=ipv4
 	DestinationIP *string `json:"destinationIP,omitempty"`
 
-	// DestinationPort is the target port (required if DestinationIP is set)
-	// +kubebuilder:validation:Minimum=1
-	// +kubebuilder:validation:Maximum=65535
-	DestinationPort *int `json:"destinationPort,omitempty"`
+	// DestinationPort is the target port, range or list (required if DestinationIP is set).
+	// It must cover either exactly one port - in which case every external port
+	// is forwarded to it - or exactly as many ports as ExternalPort, which are
+	// then mapped in ascending order.
+	// +kubebuilder:validation:XIntOrString
+	DestinationPort *intstr.IntOrString `json:"destinationPort,omitempty"`
 
 	// Enabled controls whether this rule is active
 	// +kubebuilder:default=true
@@ -62,6 +73,33 @@ type PortForwardRuleSpec struct {
 	// LogEnabled enables logging for this rule
 	// +kubebuilder:default=false
 	LogEnabled bool `json:"logEnabled,omitempty"`
+}
+
+// ExternalPortSpec parses ExternalPort into a normalized port spec.
+func (s *PortForwardRuleSpec) ExternalPortSpec() (ports.Spec, error) {
+	return portSpecFromIntOrString(s.ExternalPort)
+}
+
+// DestinationPortSpec parses DestinationPort into a normalized port spec,
+// returning the empty spec when it is unset.
+func (s *PortForwardRuleSpec) DestinationPortSpec() (ports.Spec, error) {
+	if s.DestinationPort == nil {
+		return ports.Spec{}, nil
+	}
+	return portSpecFromIntOrString(*s.DestinationPort)
+}
+
+// portSpecFromIntOrString accepts either form the API allows: a bare number, or
+// a string holding a port, range or list.
+func portSpecFromIntOrString(value intstr.IntOrString) (ports.Spec, error) {
+	if value.Type == intstr.Int {
+		port := int(value.IntVal)
+		if port < ports.MinPort || port > ports.MaxPort {
+			return ports.Spec{}, fmt.Errorf("port %d out of range (%d-%d)", port, ports.MinPort, ports.MaxPort)
+		}
+		return ports.FromPort(port), nil
+	}
+	return ports.Parse(value.StrVal)
 }
 
 // Phase constants
@@ -101,6 +139,11 @@ type PortForwardRuleStatus struct {
 	// RouterRuleID is the ID of the rule on the router
 	RouterRuleID string `json:"routerRuleID,omitempty"`
 
+	// ExternalPorts is the normalized external port spec that was applied.
+	// The print column reads this rather than spec.externalPort, which may hold
+	// either a number or a string and so cannot be rendered by a single column.
+	ExternalPorts string `json:"externalPorts,omitempty"`
+
 	// ServiceStatus contains service-specific status
 	ServiceStatus *ServiceStatus `json:"serviceStatus,omitempty"`
 
@@ -125,8 +168,12 @@ type ServiceStatus struct {
 	// LoadBalancerIP is the service's LoadBalancer IP
 	LoadBalancerIP string `json:"loadBalancerIP,omitempty"`
 
-	// ServicePort is the resolved service port number
+	// ServicePort is the lowest resolved service port number
 	ServicePort int32 `json:"servicePort,omitempty"`
+
+	// ServicePorts is the full resolved internal port spec, which may be a
+	// range or list when ExternalPort covers more than one port
+	ServicePorts string `json:"servicePorts,omitempty"`
 
 	// ServicePortName is the resolved service port name
 	ServicePortName string `json:"servicePortName,omitempty"`
@@ -173,7 +220,7 @@ type ErrorInfo struct {
 //+kubebuilder:object:root=true
 //+kubebuilder:subresource:status
 //+kubebuilder:resource:scope=Namespaced
-//+kubebuilder:printcolumn:name="External Port",type="integer",JSONPath=".spec.externalPort"
+//+kubebuilder:printcolumn:name="External Port",type="string",JSONPath=".status.externalPorts"
 //+kubebuilder:printcolumn:name="Protocol",type="string",JSONPath=".spec.protocol"
 //+kubebuilder:printcolumn:name="Service",type="string",JSONPath=".spec.serviceRef.name"
 //+kubebuilder:printcolumn:name="Enabled",type="boolean",JSONPath=".spec.enabled"

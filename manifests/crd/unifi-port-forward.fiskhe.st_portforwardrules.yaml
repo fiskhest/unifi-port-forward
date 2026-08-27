@@ -15,9 +15,9 @@ spec:
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
-    - jsonPath: .spec.externalPort
+    - jsonPath: .status.externalPorts
       name: External Port
-      type: integer
+      type: string
     - jsonPath: .spec.protocol
       name: Protocol
       type: string
@@ -76,20 +76,29 @@ spec:
                 format: ipv4
                 type: string
               destinationPort:
-                description: DestinationPort is the target port (required if DestinationIP
-                  is set)
-                maximum: 65535
-                minimum: 1
-                type: integer
+                anyOf:
+                - type: integer
+                - type: string
+                description: |-
+                  DestinationPort is the target port, range or list (required if DestinationIP is set).
+                  It must cover either exactly one port - in which case every external port
+                  is forwarded to it - or exactly as many ports as ExternalPort, which are
+                  then mapped in ascending order.
+                x-kubernetes-int-or-string: true
               enabled:
                 default: true
                 description: Enabled controls whether this rule is active
                 type: boolean
               externalPort:
-                description: ExternalPort is the WAN port to forward
-                maximum: 65535
-                minimum: 1
-                type: integer
+                anyOf:
+                - type: integer
+                - type: string
+                description: |-
+                  ExternalPort is the WAN port, port range or port list to forward.
+                  Accepts a bare number (8080), an inclusive range ("8000-8100"), or a
+                  comma-separated list of either ("80,443,8000-8100"). UniFi accepts at
+                  most 15 comma-separated elements.
+                x-kubernetes-int-or-string: true
               interface:
                 default: wan
                 description: Interface specifies the network interface
@@ -114,8 +123,10 @@ spec:
                 - both
                 type: string
               serviceRef:
-                description: ServiceRef references a Service for destination (mutually
-                  exclusive with DestinationIP)
+                description: |-
+                  ServiceRef references a Service for destination (mutually exclusive with DestinationIP).
+                  The destination IP and port are both resolved from the Service, so
+                  DestinationPort is neither needed nor used alongside it.
                 properties:
                   name:
                     description: Name is the Service name (required)
@@ -253,6 +264,12 @@ spec:
                     description: RetryCount is the number of retry attempts
                     type: integer
                 type: object
+              externalPorts:
+                description: |-
+                  ExternalPorts is the normalized external port spec that was applied.
+                  The print column reads this rather than spec.externalPort, which may hold
+                  either a number or a string and so cannot be rendered by a single column.
+                type: string
               lastAppliedTime:
                 description: LastAppliedTime is when the rule was last applied
                 format: date-time
@@ -286,11 +303,16 @@ spec:
                     description: Namespace is the service namespace
                     type: string
                   servicePort:
-                    description: ServicePort is the resolved service port number
+                    description: ServicePort is the lowest resolved service port number
                     format: int32
                     type: integer
                   servicePortName:
                     description: ServicePortName is the resolved service port name
+                    type: string
+                  servicePorts:
+                    description: |-
+                      ServicePorts is the full resolved internal port spec, which may be a
+                      range or list when ExternalPort covers more than one port
                     type: string
                 type: object
             type: object

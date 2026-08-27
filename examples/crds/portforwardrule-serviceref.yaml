@@ -6,8 +6,11 @@ metadata:
   labels:
     app: web-service
 spec:
+  # A bare number, a quoted range ("8000-8100") or a quoted list ("80,443").
   externalPort: 80
   protocol: tcp
+  # serviceRef resolves both the destination IP and the internal port from the
+  # Service, so destinationPort is neither needed nor used here.
   serviceRef:
     name: web-service
     port: http

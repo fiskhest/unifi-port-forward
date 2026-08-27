@@ -38,12 +38,13 @@ func (r *PortForwardRule) validateSpec() field.ErrorList {
 	var allErrs field.ErrorList
 	specPath := field.NewPath("spec")
 
-	// Validate external port
-	if r.Spec.ExternalPort < 1 || r.Spec.ExternalPort > 65535 {
+	// Validate external port spec (single port, range or comma-separated list)
+	externalPorts, externalErr := r.Spec.ExternalPortSpec()
+	if externalErr != nil {
 		allErrs = append(allErrs, field.Invalid(
 			specPath.Child("externalPort"),
 			r.Spec.ExternalPort,
-			"external port must be between 1 and 65535",
+			externalErr.Error(),
 		))
 	}
 
@@ -68,13 +69,24 @@ func (r *PortForwardRule) validateSpec() field.ErrorList {
 		}
 	}
 
-	// Validate destination port if specified
+	// Validate destination port spec if specified
 	if r.Spec.DestinationPort != nil {
-		if *r.Spec.DestinationPort < 1 || *r.Spec.DestinationPort > 65535 {
+		destinationPorts, destErr := r.Spec.DestinationPortSpec()
+		switch {
+		case destErr != nil:
 			allErrs = append(allErrs, field.Invalid(
 				specPath.Child("destinationPort"),
 				*r.Spec.DestinationPort,
-				"destination port must be between 1 and 65535",
+				destErr.Error(),
+			))
+		case externalErr == nil && !destinationPorts.IsSinglePort() && destinationPorts.Count() != externalPorts.Count():
+			// UniFi maps a multi-port forward spec onto the external spec in
+			// ascending order, so the two have to line up one for one.
+			allErrs = append(allErrs, field.Invalid(
+				specPath.Child("destinationPort"),
+				*r.Spec.DestinationPort,
+				fmt.Sprintf("destination port spec covers %d ports but externalPort covers %d; use a single port or match the count",
+					destinationPorts.Count(), externalPorts.Count()),
 			))
 		}
 	}
@@ -205,6 +217,12 @@ func (r *PortForwardRule) ValidateCrossNamespacePortConflict(ctx context.Context
 		return allErrs
 	}
 
+	// An unparseable spec is reported by validateSpec; nothing to compare here
+	externalPorts, err := r.Spec.ExternalPortSpec()
+	if err != nil {
+		return allErrs
+	}
+
 	// List all PortForwardRules in all namespaces
 	var ruleList PortForwardRuleList
 	if err := client.List(ctx, &ruleList); err != nil {
@@ -218,15 +236,20 @@ func (r *PortForwardRule) ValidateCrossNamespacePortConflict(ctx context.Context
 			continue
 		}
 
-		// Check port conflict
-		if existingRule.Spec.ExternalPort == r.Spec.ExternalPort &&
+		// Check port conflict - any shared port between the two specs collides
+		existingPorts, err := existingRule.Spec.ExternalPortSpec()
+		if err != nil {
+			continue
+		}
+
+		if existingPorts.Overlaps(externalPorts) &&
 			(existingRule.Spec.Protocol == r.Spec.Protocol || existingRule.Spec.Protocol == "both" || r.Spec.Protocol == "both") {
 
 			// Same namespace conflict = error
 			if existingRule.Namespace == r.Namespace {
 				allErrs = append(allErrs, field.Forbidden(
 					specPath.Child("externalPort"),
-					fmt.Sprintf("port %d conflicts with existing rule %s in same namespace", r.Spec.ExternalPort, existingRule.Name),
+					fmt.Sprintf("port %s conflicts with existing rule %s (%s) in same namespace", externalPorts, existingRule.Name, existingPorts),
 				))
 			}
 		}
@@ -239,13 +262,13 @@ func (r *PortForwardRule) ValidateCrossNamespacePortConflict(ctx context.Context
 
 		for _, service := range serviceList.Items {
 			if port, hasAnnotation := service.Annotations["port-forwarder.unifi.com/external-port"]; hasAnnotation {
-				if servicePort, protocol := parseServiceAnnotation(port); servicePort == r.Spec.ExternalPort &&
+				if servicePort, protocol := parseServiceAnnotation(port); externalPorts.Contains(servicePort) &&
 					(protocol == r.Spec.Protocol || protocol == "both" || r.Spec.Protocol == "both") {
 
 					if service.Namespace == r.Namespace {
 						allErrs = append(allErrs, field.Forbidden(
 							specPath.Child("externalPort"),
-							fmt.Sprintf("port %d conflicts with existing Service annotation on %s/%s", r.Spec.ExternalPort, service.Namespace, service.Name),
+							fmt.Sprintf("port %d conflicts with existing Service annotation on %s/%s", servicePort, service.Namespace, service.Name),
 						))
 					}
 				}

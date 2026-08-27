@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -19,21 +20,29 @@ const (
 	PortForwardRulesCRDName   = "portforwardrules.unifi-port-forward.fiskhe.st"
 )
 
+// Config holds the controller's runtime configuration.
+//
+// The env tags document which variable feeds each field; loading itself is done
+// by hand in InitFromEnv. Defaults live in SetDefaults and nowhere else - an
+// earlier `default:` tag here claimed a different router IP than SetDefaults
+// actually applied, which was invisible because nothing ever parsed the tags.
 type Config struct {
 	// UniFi Connection Settings
-	RouterIP string `env:"UNIFI_ROUTER_IP" default:"192.168.27.1" json:"routerIp"`
-	Username string `env:"UNIFI_USERNAME" default:"admin" json:"username"`
-	Password string `env:"UNIFI_PASSWORD" required:"true" json:"password"`
-	Site     string `env:"UNIFI_SITE" default:"default" json:"site"`
-	APIKey   string `env:"UNIFI_API_KEY" json:"apiKey"`
+	RouterIP string `env:"UNIFI_ROUTER_IP" json:"routerIp"`
+	Username string `env:"UNIFI_USERNAME" json:"username"`
+	// Password and APIKey are json:"-" so that dumping a Config for diagnostics
+	// cannot leak a credential.
+	Password string `env:"UNIFI_PASSWORD" json:"-"`
+	Site     string `env:"UNIFI_SITE" json:"site"`
+	APIKey   string `env:"UNIFI_API_KEY" json:"-"`
 
 	// Application Settings
-	Debug        bool          `env:"DEBUG" default:"false" json:"debug"`
-	SyncInterval time.Duration `env:"UNIFI_SYNC_INTERVAL" default:"15m" json:"syncInterval"`
+	Debug        bool          `env:"DEBUG" json:"debug"`
+	SyncInterval time.Duration `env:"UNIFI_SYNC_INTERVAL" json:"syncInterval"`
 
 	// Finalizer settings
-	FinalizerMaxRetries    int           `env:"FINALIZER_MAX_RETRIES" default:"3" json:"finalizerMaxRetries"`
-	FinalizerRetryInterval time.Duration `env:"FINALIZER_RETRY_INTERVAL" default:"30s" json:"finalizerRetryInterval"`
+	FinalizerMaxRetries    int           `env:"FINALIZER_MAX_RETRIES" json:"finalizerMaxRetries"`
+	FinalizerRetryInterval time.Duration `env:"FINALIZER_RETRY_INTERVAL" json:"finalizerRetryInterval"`
 
 	// Runtime values (derived from settings)
 	Host string `json:"-"`
@@ -130,7 +139,17 @@ func InitFromEnv(cfg *Config) {
 		cfg.SyncInterval = syncInterval
 	}
 	if envDebug := os.Getenv("DEBUG"); envDebug != "" {
-		cfg.Debug = envDebug != ""
+		// Parse the value rather than testing it for emptiness: the latter made
+		// DEBUG=False enable debug logging, which is exactly what the shipped
+		// manifest set.
+		//
+		// An unparseable value warns rather than exiting. Verbosity is not worth
+		// refusing to start over, unlike the sync interval below it.
+		if debug, err := strconv.ParseBool(envDebug); err == nil {
+			cfg.Debug = debug
+		} else {
+			log.Printf("ignoring DEBUG=%q: want a boolean such as true or false", envDebug)
+		}
 	}
 }
 

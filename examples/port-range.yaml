@@ -1,0 +1,28 @@
+###
+### Creates a single rule `namespace/game-server:game` that forwards the WAN port
+### range 27015-27020 to the service port named "game" (27015), preserving each
+### port's offset: 27015 -> 27015, 27016 -> 27016, and so on.
+###
+### A second rule `namespace/game-server:web` forwards both WAN 80 and WAN 443 to
+### the single service port named "web" (8080). Commas separate mappings, so a
+### port list is written as repeated mappings against the same port name.
+###
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: game-server
+  annotations:
+    unifi-port-forward.fiskhe.st/mapping: "27015-27020:game,80:web,443:web"
+spec:
+  selector:
+    app: game-server
+  ports:
+    - name: game
+      port: 27015
+      targetPort: 27015
+      protocol: UDP
+    - name: web
+      port: 8080
+      targetPort: 8080
+  type: LoadBalancer

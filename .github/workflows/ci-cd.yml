@@ -8,9 +8,6 @@ permissions:
   contents: read
   packages: write
 
-env:
-  REGISTRY: ghcr.io/fiskhest/unifi-port-forward
-
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
@@ -26,23 +23,34 @@ jobs:
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         with:
-          registry: ${{ env.REGISTRY }}
+          registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract metadata
+      - name: Resolve image reference and tags
         id: meta
         run: |
-          DATE=$(date +%Y-%m-%d)
-          COMMIT_SHA=${GITHUB_SHA::7}
-          echo "date-tag=${DATE}-${COMMIT_SHA}" >> $GITHUB_OUTPUT
+          # Publish to whichever repository this workflow is running in. GHCR
+          # paths are ghcr.io/<owner>/<name>, which is exactly $GITHUB_REPOSITORY,
+          # so this resolves to ghcr.io/fiskhest/unifi-port-forward upstream and
+          # to a fork's own namespace in a fork - no per-repo edits, and nothing
+          # fork-specific to strip out before sending a change upstream.
+          #
+          # GHCR rejects uppercase, which owner names are allowed to contain.
+          image="ghcr.io/$(printf '%s' "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')"
+
+          echo "image=${image}" >> "$GITHUB_OUTPUT"
+          echo "date-tag=$(date +%Y-%m-%d)-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
 
       - name: Build and push Docker image
         uses: docker/bake-action@v6
+        env:
+          # docker-bake.hcl owns the tag shape; CI only supplies the values.
+          REGISTRY: ${{ steps.meta.outputs.image }}
+          IMAGE_TAG: ${{ steps.meta.outputs.date-tag }}
         with:
           push: true
+          # Only valid inside Actions, so it lives here rather than in the bake file.
           set: |
-            controller.tags+=${{ env.REGISTRY }}:latest
-            controller.tags+=${{ env.REGISTRY }}:${{ steps.meta.outputs.date-tag }}
             *.cache-from=type=gha
             *.cache-to=type=gha,mode=max

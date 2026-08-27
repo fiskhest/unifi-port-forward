@@ -3,11 +3,11 @@ package testutils
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"strings"
 	"sync"
 
 	"github.com/filipowm/go-unifi/unifi"
+	"unifi-port-forward/pkg/ports"
 	"unifi-port-forward/pkg/routers"
 )
 
@@ -81,9 +81,9 @@ func (r *MockRouter) AddPort(ctx context.Context, config routers.PortConfig) err
 		ID:            fmt.Sprintf("mock-id-%d", len(r.PortForwards)+1),
 		Name:          config.Name,
 		DestinationIP: "any",
-		DstPort:       strconv.Itoa(config.DstPort),
+		DstPort:       config.DstPort.String(),
 		Fwd:           config.DstIP,
-		FwdPort:       strconv.Itoa(config.FwdPort),
+		FwdPort:       config.FwdPort.String(),
 		Proto:         config.Protocol,
 		Enabled:       config.Enabled,
 		PfwdInterface: config.Interface,
@@ -92,8 +92,8 @@ func (r *MockRouter) AddPort(ctx context.Context, config routers.PortConfig) err
 
 	// Check if port already exists
 	for _, existing := range r.PortForwards {
-		if existing.DstPort == strconv.Itoa(config.DstPort) && existing.DestinationIP == config.DstIP {
-			return fmt.Errorf("port %d to %s already exists", config.DstPort, config.DstIP)
+		if existing.DstPort == config.DstPort.String() && existing.DestinationIP == config.DstIP {
+			return fmt.Errorf("port %s to %s already exists", config.DstPort, config.DstIP)
 		}
 	}
 
@@ -103,7 +103,7 @@ func (r *MockRouter) AddPort(ctx context.Context, config routers.PortConfig) err
 }
 
 // CheckPort implements routers.Router.CheckPort
-func (r *MockRouter) CheckPort(ctx context.Context, port int, protocol string) (*unifi.PortForward, bool, error) {
+func (r *MockRouter) CheckPort(ctx context.Context, port ports.Spec, protocol string) (*unifi.PortForward, bool, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	r.callCount["CheckPort"]++
@@ -113,10 +113,8 @@ func (r *MockRouter) CheckPort(ctx context.Context, port int, protocol string) (
 		return nil, false, fmt.Errorf("simulated CheckPort failure")
 	}
 
-	portStr := strconv.Itoa(port)
-
 	for _, pf := range r.PortForwards {
-		if pf.DstPort == portStr && strings.EqualFold(pf.Proto, protocol) {
+		if ports.ParseOrEmpty(pf.DstPort).Equal(port) && strings.EqualFold(pf.Proto, protocol) {
 			return &pf, true, nil
 		}
 	}
@@ -135,20 +133,19 @@ func (r *MockRouter) RemovePort(ctx context.Context, config routers.PortConfig) 
 		return fmt.Errorf("simulated RemovePort failure")
 	}
 
-	portStr := strconv.Itoa(config.DstPort)
 	for i, pf := range r.PortForwards {
-		if pf.DstPort == portStr && pf.Fwd == config.DstIP {
+		if ports.ParseOrEmpty(pf.DstPort).Equal(config.DstPort) && pf.Fwd == config.DstIP {
 			// Remove the matching rule
 			r.PortForwards = append(r.PortForwards[:i], r.PortForwards[i+1:]...)
 			return nil
 		}
 	}
 
-	return fmt.Errorf("port %d to %s not found", config.DstPort, config.DstIP)
+	return fmt.Errorf("port %s to %s not found", config.DstPort, config.DstIP)
 }
 
 // UpdatePort implements routers.Router.UpdatePort
-func (r *MockRouter) UpdatePort(ctx context.Context, port int, config routers.PortConfig) error {
+func (r *MockRouter) UpdatePort(ctx context.Context, port ports.Spec, config routers.PortConfig) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.callCount["UpdatePort"]++
@@ -158,17 +155,16 @@ func (r *MockRouter) UpdatePort(ctx context.Context, port int, config routers.Po
 		return fmt.Errorf("simulated UpdatePort failure")
 	}
 
-	portStr := strconv.Itoa(port)
 	for i, pf := range r.PortForwards {
-		if pf.DstPort == portStr {
+		if ports.ParseOrEmpty(pf.DstPort).Equal(port) {
 			// Update existing rule (match by port only, since we might be changing IP)
 			r.PortForwards[i] = unifi.PortForward{
 				ID:            pf.ID,
 				Name:          config.Name,
 				DestinationIP: "any",
-				DstPort:       strconv.Itoa(config.DstPort),
+				DstPort:       config.DstPort.String(),
 				Fwd:           config.DstIP,
-				FwdPort:       strconv.Itoa(config.FwdPort),
+				FwdPort:       config.FwdPort.String(),
 				Proto:         config.Protocol,
 				Enabled:       config.Enabled,
 				PfwdInterface: config.Interface,
@@ -178,7 +174,7 @@ func (r *MockRouter) UpdatePort(ctx context.Context, port int, config routers.Po
 		}
 	}
 
-	return fmt.Errorf("port %d to %s not found", port, config.DstIP)
+	return fmt.Errorf("port %s to %s not found", port, config.DstIP)
 }
 
 // ListAllPortForwards implements routers.Router.ListAllPortForwards

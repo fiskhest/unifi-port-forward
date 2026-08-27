@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"syscall"
 
@@ -22,6 +21,7 @@ import (
 	"unifi-port-forward/pkg/config"
 	"unifi-port-forward/pkg/controller"
 	"unifi-port-forward/pkg/helpers"
+	"unifi-port-forward/pkg/ports"
 	"unifi-port-forward/pkg/routers"
 
 	corev1 "k8s.io/api/core/v1"
@@ -70,19 +70,30 @@ var rootCmd = &cobra.Command{
 			cfg.Debug, _ = cmd.Flags().GetBool("debug")
 		}
 
+		// Re-derive Host now that the flags have been applied. cfg.Load() already
+		// derived it from the environment, so without this a --router-ip flag
+		// updates RouterIP but the controller still connects to the old address.
+		cfg.SetDerivedValues()
+
 		// Validate final configuration
 		return cfg.Validate()
 	},
 }
 
 func init() {
-	// Global flags
-	rootCmd.PersistentFlags().StringVarP(&cfg.RouterIP, "router-ip", "r", "192.168.1.1", "UniFi router IP address (env: UNIFI_ROUTER_IP, default: 192.168.1.1)")
-	rootCmd.PersistentFlags().StringVarP(&cfg.Username, "username", "u", "admin", "UniFi username (env: UNIFI_USERNAME, default: admin)")
-	rootCmd.PersistentFlags().StringVarP(&cfg.Password, "password", "p", "", "UniFi password (env: UNIFI_PASSWORD, required)")
-	rootCmd.PersistentFlags().StringVarP(&cfg.Site, "site", "s", "default", "UniFi site name (env: UNIFI_SITE, default: default)")
-	rootCmd.PersistentFlags().StringVarP(&cfg.APIKey, "api-key", "k", "", "UniFi API key (env: UNIFI_API_KEY, alternative to username/password)")
-	rootCmd.PersistentFlags().BoolVarP(&cfg.Debug, "debug", "d", false, "Enable debug logging (env: DEBUG)")
+	// Global flags.
+	//
+	// These deliberately have their own storage rather than binding to cfg
+	// fields with StringVarP. A bound flag shares memory with the field, so
+	// cfg.Load() reading the environment would overwrite the parsed flag value
+	// and the "override with CLI flags" step below would read the environment
+	// value straight back - making every flag here silently lose to its env var.
+	rootCmd.PersistentFlags().StringP("router-ip", "r", "192.168.1.1", "UniFi router IP address (env: UNIFI_ROUTER_IP, default: 192.168.1.1)")
+	rootCmd.PersistentFlags().StringP("username", "u", "admin", "UniFi username (env: UNIFI_USERNAME, default: admin)")
+	rootCmd.PersistentFlags().StringP("password", "p", "", "UniFi password (env: UNIFI_PASSWORD, required unless --api-key is set)")
+	rootCmd.PersistentFlags().StringP("site", "s", "default", "UniFi site name (env: UNIFI_SITE, default: default)")
+	rootCmd.PersistentFlags().StringP("api-key", "k", "", "UniFi API key (env: UNIFI_API_KEY, alternative to username/password)")
+	rootCmd.PersistentFlags().BoolP("debug", "d", false, "Enable debug logging (env: DEBUG)")
 
 	// Add subcommands
 	rootCmd.AddCommand(controllerCmd)
@@ -290,8 +301,10 @@ func parsePortMappingsString(mappingsStr string) (map[string]string, error) {
 		port := strings.TrimSpace(parts[0])
 		ip := strings.TrimSpace(parts[1])
 
-		// Validate port is numeric
-		if _, err := strconv.Atoi(port); err != nil {
+		// Validate the port spec - a single port or a range such as "8000-8100".
+		// Commas already separate mappings, so a list cannot be written here.
+		portSpec, err := ports.Parse(port)
+		if err != nil {
 			return nil, fmt.Errorf("invalid port number: %s", port)
 		}
 
@@ -300,7 +313,7 @@ func parsePortMappingsString(mappingsStr string) (map[string]string, error) {
 			return nil, fmt.Errorf("invalid IP address: %s", ip)
 		}
 
-		portMaps[port] = ip
+		portMaps[portSpec.String()] = ip
 	}
 
 	return portMaps, nil
@@ -372,8 +385,9 @@ func loadPortMappingsFromFile(filename string) (map[string]string, error) {
 
 	portMaps := make(map[string]string)
 	for _, mapping := range config.Mappings {
-		// Validate port
-		if _, err := strconv.Atoi(mapping.ExternalPort); err != nil {
+		// Validate the port spec - a single port, a range, or a list
+		portSpec, err := ports.Parse(mapping.ExternalPort)
+		if err != nil {
 			return nil, fmt.Errorf("invalid port number: %s", mapping.ExternalPort)
 		}
 
@@ -382,7 +396,7 @@ func loadPortMappingsFromFile(filename string) (map[string]string, error) {
 			return nil, fmt.Errorf("invalid IP address: %s", mapping.DestinationIP)
 		}
 
-		portMaps[mapping.ExternalPort] = mapping.DestinationIP
+		portMaps[portSpec.String()] = mapping.DestinationIP
 	}
 
 	return portMaps, nil

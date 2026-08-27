@@ -11,6 +11,16 @@ rules:
       - get
       - list
       - watch
+  # Needed to resolve a node address for NodePort services. Without it, NodePort
+  # services must carry the unifi-port-forward.fiskhe.st/dst-ip annotation.
+  - apiGroups:
+      - ""
+    resources:
+      - nodes
+    verbs:
+      - get
+      - list
+      - watch
   - apiGroups:
       - ""
     resources:

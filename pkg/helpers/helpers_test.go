@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"unifi-port-forward/pkg/ports"
 	"unifi-port-forward/pkg/routers"
 
 	"github.com/filipowm/go-unifi/unifi"
@@ -198,18 +199,18 @@ func TestUnmarkPortUsed(t *testing.T) {
 	// Mark a port as used
 	port := 8080
 	serviceKey := "test/service"
-	markPortUsed(port, serviceKey)
+	markPortUsed(ports.FromPort(port), serviceKey)
 
 	// Verify port is marked
-	if err := CheckPortConflict(port, serviceKey); err != nil {
+	if err := CheckPortConflict(ports.FromPort(port), serviceKey); err != nil {
 		t.Errorf("Expected no conflict for own service, got error: %v", err)
 	}
 
 	// Unmark the port
-	UnmarkPortUsed(port)
+	UnmarkPortUsed(ports.FromPort(port))
 
 	// Verify port is no longer marked
-	if err := CheckPortConflict(port, "different/service"); err != nil {
+	if err := CheckPortConflict(ports.FromPort(port), "different/service"); err != nil {
 		t.Errorf("Expected no conflict after unmarking, got error: %v", err)
 	}
 }
@@ -220,15 +221,15 @@ func TestUnmarkPortsForService(t *testing.T) {
 
 	// Mark multiple ports for a service
 	serviceKey := "test/multiport-service"
-	ports := []int{80, 443, 8080}
+	portNums := []int{80, 443, 8080}
 
-	for _, port := range ports {
-		markPortUsed(port, serviceKey)
+	for _, port := range portNums {
+		markPortUsed(ports.FromPort(port), serviceKey)
 	}
 
 	// Verify all ports are marked
-	for _, port := range ports {
-		if err := CheckPortConflict(port, serviceKey); err != nil {
+	for _, port := range portNums {
+		if err := CheckPortConflict(ports.FromPort(port), serviceKey); err != nil {
 			t.Errorf("Expected no conflict for own service on port %d, got error: %v", port, err)
 		}
 	}
@@ -237,8 +238,8 @@ func TestUnmarkPortsForService(t *testing.T) {
 	UnmarkPortsForService(serviceKey)
 
 	// Verify all ports are no longer marked
-	for _, port := range ports {
-		if err := CheckPortConflict(port, "different/service"); err != nil {
+	for _, port := range portNums {
+		if err := CheckPortConflict(ports.FromPort(port), "different/service"); err != nil {
 			t.Errorf("Expected no conflict after unmarking service on port %d, got error: %v", port, err)
 		}
 	}
@@ -264,17 +265,17 @@ func TestPortConflictTracking_ConcurrentAccess(t *testing.T) {
 				serviceKey := "test/concurrent-service"
 
 				// Mark port
-				markPortUsed(port, serviceKey)
+				markPortUsed(ports.FromPort(port), serviceKey)
 
 				// Check conflict
-				err := CheckPortConflict(port, serviceKey)
+				err := CheckPortConflict(ports.FromPort(port), serviceKey)
 				if err != nil {
 					errors <- err
 					return
 				}
 
 				// Unmark port
-				UnmarkPortUsed(port)
+				UnmarkPortUsed(ports.FromPort(port))
 			}
 		}(i)
 	}
@@ -293,18 +294,18 @@ func TestClearPortConflictTracking_InProduction(t *testing.T) {
 	// It's only for test isolation
 
 	// Mark some ports
-	markPortUsed(8080, "test/service1")
-	markPortUsed(9090, "test/service2")
+	markPortUsed(ports.FromPort(8080), "test/service1")
+	markPortUsed(ports.FromPort(9090), "test/service2")
 
 	// Clear all tracking
 	ClearPortConflictTracking()
 
 	// Verify all tracking is cleared
-	if err := CheckPortConflict(8080, "any/service"); err != nil {
+	if err := CheckPortConflict(ports.FromPort(8080), "any/service"); err != nil {
 		t.Errorf("Expected no conflict after clearing tracking, got error: %v", err)
 	}
 
-	if err := CheckPortConflict(9090, "any/service"); err != nil {
+	if err := CheckPortConflict(ports.FromPort(9090), "any/service"); err != nil {
 		t.Errorf("Expected no conflict after clearing tracking, got error: %v", err)
 	}
 }
@@ -347,13 +348,13 @@ func (m *MockRouter) AddPort(ctx context.Context, config routers.PortConfig) err
 	return nil
 }
 
-func (m *MockRouter) UpdatePort(ctx context.Context, externalPort int, config routers.PortConfig) error {
+func (m *MockRouter) UpdatePort(ctx context.Context, externalPort ports.Spec, config routers.PortConfig) error {
 	return nil
 }
 
-func (m *MockRouter) CheckPort(ctx context.Context, port int, protocol string) (*unifi.PortForward, bool, error) {
+func (m *MockRouter) CheckPort(ctx context.Context, port ports.Spec, protocol string) (*unifi.PortForward, bool, error) {
 	for _, rule := range m.rules {
-		if rule.DstPort == string(rune(port)) && strings.EqualFold(rule.Proto, protocol) {
+		if ports.ParseOrEmpty(rule.DstPort).Equal(port) && strings.EqualFold(rule.Proto, protocol) {
 			return rule, true, nil
 		}
 	}
@@ -408,23 +409,23 @@ func TestSyncPortTrackingWithRouter(t *testing.T) {
 	}
 
 	// Test conflicts with proper service keys
-	err = CheckPortConflict(80, "default/web-service")
+	err = CheckPortConflict(ports.FromPort(80), "default/web-service")
 	if err != nil {
 		t.Errorf("Expected no conflict for own service port 80, got: %v", err)
 	}
 
-	err = CheckPortConflict(80, "other-service")
+	err = CheckPortConflict(ports.FromPort(80), "other-service")
 	if err == nil {
 		t.Error("Expected conflict for other service using port 80")
 	}
 
-	err = CheckPortConflict(443, "kube-system/api-server")
+	err = CheckPortConflict(ports.FromPort(443), "kube-system/api-server")
 	if err != nil {
 		t.Errorf("Expected no conflict for own service port 443, got: %v", err)
 	}
 
 	// Test manual rule (should NOT show as conflict since we skip manual rules)
-	err = CheckPortConflict(89, "default/new-service")
+	err = CheckPortConflict(ports.FromPort(89), "default/new-service")
 	if err != nil {
 		t.Errorf("Expected no conflict for port 89 used by manual rule (manual rules are skipped), got: %v", err)
 	}

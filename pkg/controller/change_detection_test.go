@@ -6,6 +6,7 @@ import (
 	// "time"
 	"github.com/filipowm/go-unifi/unifi"
 
+	"unifi-port-forward/pkg/ports"
 	"unifi-port-forward/pkg/routers"
 
 	corev1 "k8s.io/api/core/v1"
@@ -175,20 +176,20 @@ func TestCollectRulesForService(t *testing.T) {
 	configs := []routers.PortConfig{
 		{
 			Name:     "default/webapp:http",
-			DstPort:  8080,
-			FwdPort:  80,
+			DstPort:  ports.FromPort(8080),
+			FwdPort:  ports.FromPort(80),
 			Protocol: "tcp",
 		},
 		{
 			Name:     "default/webapp:https",
-			DstPort:  8443,
-			FwdPort:  443,
+			DstPort:  ports.FromPort(8443),
+			FwdPort:  ports.FromPort(443),
 			Protocol: "tcp",
 		},
 		{
 			Name:     "default/webapp:db",
-			DstPort:  3306,
-			FwdPort:  3306,
+			DstPort:  ports.FromPort(3306),
+			FwdPort:  ports.FromPort(3306),
 			Protocol: "tcp",
 		},
 	}

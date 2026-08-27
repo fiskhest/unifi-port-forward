@@ -5,8 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strconv"
 	"strings"
+
+	"unifi-port-forward/pkg/ports"
 
 	"github.com/filipowm/go-unifi/unifi"
 	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
@@ -18,6 +19,10 @@ import (
 type UnifiRouter struct {
 	SiteID string
 	Client unifi.Client
+
+	// usesAPIKey records which credential the client was built with. API key
+	// auth has no session to renew, so a 401 cannot be retried away.
+	usesAPIKey bool
 }
 
 func CreateUnifiRouter(baseURL, username, password, site, apiKey string) (*UnifiRouter, error) {
@@ -31,7 +36,12 @@ func CreateUnifiRouter(baseURL, username, password, site, apiKey string) (*Unifi
 	}
 
 	// override if using API key (recommended, requires UniFi Controller 9.0.108+)
-	if apiKey != "" {
+	//
+	// User, Password and RememberMe must be cleared, not merely ignored: the
+	// client validates them as `excluded_with=APIKey`, so leaving any of them set
+	// fails client creation outright under HardValidation.
+	usesAPIKey := apiKey != ""
+	if usesAPIKey {
 		clientConfig.APIKey = apiKey
 		clientConfig.User = ""
 		clientConfig.Password = ""
@@ -43,6 +53,7 @@ func CreateUnifiRouter(baseURL, username, password, site, apiKey string) (*Unifi
 		return nil, fmt.Errorf("failed to create client: %w", err)
 	}
 
+	// A no-op for API key auth, which authenticates per request instead.
 	err = client.Login()
 	if err != nil {
 		return nil, err
@@ -51,33 +62,49 @@ func CreateUnifiRouter(baseURL, username, password, site, apiKey string) (*Unifi
 	fmt.Printf("UniFi Controller Version: %s\n", client.Version())
 
 	router := &UnifiRouter{
-		SiteID: site,
-		Client: client,
+		SiteID:     site,
+		Client:     client,
+		usesAPIKey: usesAPIKey,
 	}
 
 	return router, nil
 }
 
-// withAuthRetry executes a function with automatic authentication retry on 401 errors
+// withAuthRetry executes a function, renewing the session and retrying once if
+// the router rejects it as unauthenticated.
+//
+// That recovery only applies to user/pass auth. An API key is sent on every
+// request and Login is a no-op for it, so retrying a 401 would re-issue the same
+// rejected request; the key itself is wrong, revoked, or lacks permission.
 func (router *UnifiRouter) withAuthRetry(ctx context.Context, operation string, fn func() error) error {
 	logger := ctrllog.FromContext(ctx)
 
 	err := fn()
+	if err == nil {
+		return nil
+	}
+
+	if serverErr, ok := err.(*unifi.ServerError); ok && serverErr.StatusCode == http.StatusUnauthorized {
+		if router.usesAPIKey {
+			logger.Error(err, "Router rejected the API key",
+				"operation", operation,
+				"hint", "check that UNIFI_API_KEY is current and its admin has network write permission")
+			return err
+		}
+
+		logger.Info("Renewing authentication to router", "operation", operation)
+		if loginErr := router.Client.Login(); loginErr == nil {
+			err = fn()
+		}
+	}
+
 	if err != nil {
-		if serverErr, ok := err.(*unifi.ServerError); ok && serverErr.StatusCode == http.StatusUnauthorized {
-			logger.Info("Renewing authentication to router", "operation", operation)
-			if loginErr := router.Client.Login(); loginErr == nil {
-				err = fn()
-			}
-		}
-		if err != nil {
-			logger.Error(err, "Operation failed after authentication retry", "operation", operation)
-		}
+		logger.Error(err, "Operation failed after authentication retry", "operation", operation)
 	}
 	return err
 }
 
-func (router *UnifiRouter) CheckPort(ctx context.Context, port int, protocol string) (*unifi.PortForward, bool, error) {
+func (router *UnifiRouter) CheckPort(ctx context.Context, port ports.Spec, protocol string) (*unifi.PortForward, bool, error) {
 	logger := ctrllog.FromContext(ctx)
 
 	var portforwards []unifi.PortForward
@@ -97,14 +124,13 @@ func (router *UnifiRouter) CheckPort(ctx context.Context, port int, protocol str
 
 	// Process each rule
 	for _, portforward := range portforwards {
-		portNum, parseErr := strconv.Atoi(portforward.DstPort)
-
-		if parseErr != nil {
+		rulePorts := ports.ParseOrEmpty(portforward.DstPort)
+		if rulePorts.IsEmpty() {
 			continue
 		}
 
 		// Match both port and protocol to ensure we find the correct rule
-		if portNum == port && strings.EqualFold(portforward.Proto, protocol) {
+		if rulePorts.Equal(port) && strings.EqualFold(portforward.Proto, protocol) {
 			logger.V(1).Info("Found matching port forward rule",
 				"port", port,
 				"protocol", protocol,
@@ -146,13 +172,21 @@ func (router *UnifiRouter) AddPort(ctx context.Context, config PortConfig) error
 		return err
 	}
 
+	if config.DstPort.IsEmpty() {
+		err := fmt.Errorf("external port spec was empty - I don't want to create such a rule")
+		logger.Error(err, "Failed validation: external port spec is empty",
+			"config", config,
+		)
+		return err
+	}
+
 	portforward := &unifi.PortForward{
 		SiteID:        router.SiteID,
 		DestinationIP: "any",
 		Enabled:       config.Enabled,
 		Fwd:           config.DstIP,
-		FwdPort:       strconv.Itoa(config.FwdPort),
-		DstPort:       strconv.Itoa(config.DstPort),
+		FwdPort:       config.FwdPort.String(),
+		DstPort:       config.DstPort.String(),
 		Name:          config.Name,
 		PfwdInterface: config.Interface,
 		Proto:         config.Protocol,
@@ -186,7 +220,7 @@ func (router *UnifiRouter) AddPort(ctx context.Context, config PortConfig) error
 	return nil
 }
 
-func (router *UnifiRouter) UpdatePort(ctx context.Context, port int, config PortConfig) error {
+func (router *UnifiRouter) UpdatePort(ctx context.Context, port ports.Spec, config PortConfig) error {
 	logger := ctrllog.FromContext(ctx)
 
 	logger.Info("Starting port forward rule update",
@@ -209,7 +243,7 @@ func (router *UnifiRouter) UpdatePort(ctx context.Context, port int, config Port
 
 	if !portExists {
 		// Rule doesn't exist, log clear error and return for proper handling
-		errorMsg := fmt.Sprintf("port forward rule for port %d not found", port)
+		errorMsg := fmt.Sprintf("port forward rule for port %s not found", port)
 		logger.Info("Port forward rule not found for update",
 			"port", port,
 			"config_name", config.Name,
@@ -232,8 +266,8 @@ func (router *UnifiRouter) UpdatePort(ctx context.Context, port int, config Port
 		DestinationIP: pf.DestinationIP, // Preserve existing source filter
 		Enabled:       config.Enabled,
 		Fwd:           config.DstIP,
-		FwdPort:       strconv.Itoa(config.FwdPort),
-		DstPort:       strconv.Itoa(config.DstPort),
+		FwdPort:       config.FwdPort.String(),
+		DstPort:       config.DstPort.String(),
 		Name:          config.Name,
 		PfwdInterface: config.Interface,
 		Proto:         config.Protocol,
@@ -253,7 +287,7 @@ func (router *UnifiRouter) UpdatePort(ctx context.Context, port int, config Port
 			"rule_id", pf.ID,
 			"update_payload", portforward,
 		)
-		return fmt.Errorf("failed to update port forward rule for port %d (protocol %s): %w", port, config.Protocol, err)
+		return fmt.Errorf("failed to update port forward rule for port %s (protocol %s): %w", port, config.Protocol, err)
 	}
 
 	logger.Info("Successfully updated port forward rule",

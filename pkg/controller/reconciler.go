@@ -4,13 +4,14 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"unifi-port-forward/pkg/config"
+	"unifi-port-forward/pkg/destination"
 	"unifi-port-forward/pkg/helpers"
+	"unifi-port-forward/pkg/ports"
 	"unifi-port-forward/pkg/routers"
 
 	"github.com/filipowm/go-unifi/unifi"
@@ -103,11 +104,24 @@ func (r *PortForwardReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		return ctrl.Result{}, nil
 	}
 
-	lbIP := helpers.GetLBIP(service)
-
-	if lbIP == "" {
+	dest, destErr := resolveServiceDestination(ctx, r.Client, service)
+	if destErr != nil {
+		// An unsupported type is a permanent misconfiguration, so say so once and
+		// stop. Anything else - no LB IP yet, no Ready node - is transient and
+		// resolves on a later event or the periodic pass.
+		if destination.IsUnsupportedType(destErr) && hasPortForwardAnnotation(service) {
+			logger.Info("Service type cannot be port forwarded, skipping",
+				"service_type", service.Spec.Type, "reason", destErr.Error())
+			if r.Recorder != nil {
+				r.Recorder.Event(service, corev1.EventTypeWarning, "UnsupportedServiceType", destErr.Error())
+			}
+		} else {
+			logger.V(1).Info("No destination address for service yet, skipping",
+				"service_type", service.Spec.Type, "reason", destErr.Error())
+		}
 		return ctrl.Result{}, nil
 	}
+	lbIP := dest.IP
 
 	// Check if service needs port forwarding and add finalizer if needed
 	shouldManage := r.shouldProcessService(ctx, service, lbIP)
@@ -279,7 +293,7 @@ func (r *PortForwardReconciler) shouldProcessService(ctx context.Context, servic
 func (r *PortForwardReconciler) processAllChanges(ctx context.Context, service *corev1.Service, changeContext *ChangeContext, currentRules []*unifi.PortForward) ([]PortOperation, ctrl.Result, error) {
 	logger := ctrllog.FromContext(ctx)
 	// Step 1: Determine desired end state
-	desiredConfigs, err := r.calculateDesiredState(service)
+	desiredConfigs, err := r.calculateDesiredState(ctx, service)
 	if err != nil {
 		logger.Error(err, "calculating desired state while processing all changes")
 
@@ -302,7 +316,7 @@ func (r *PortForwardReconciler) processAllChanges(ctx context.Context, service *
 		if r.EventPublisher != nil {
 			for _, failedErr := range result.Failed {
 				r.EventPublisher.PublishPortForwardFailedEvent(ctx, service,
-					"", "", "", 0, "", "OperationFailed", failedErr)
+					"", "", "", ports.Spec{}, "", "OperationFailed", failedErr)
 			}
 		}
 
@@ -320,7 +334,7 @@ func (r *PortForwardReconciler) processAllChanges(ctx context.Context, service *
 		// Convert desiredConfigs to string representation for PortForwardRules
 		var ruleNames []string
 		for _, config := range desiredConfigs {
-			ruleNames = append(ruleNames, fmt.Sprintf("%d:%d", config.DstPort, config.FwdPort))
+			ruleNames = append(ruleNames, fmt.Sprintf("%s:%s", config.DstPort, config.FwdPort))
 		}
 		changeContext.PortForwardRules = ruleNames
 	}
@@ -328,27 +342,26 @@ func (r *PortForwardReconciler) processAllChanges(ctx context.Context, service *
 	// Publish events for successful operations
 	if r.EventPublisher != nil && len(result.Created) > 0 {
 		for _, created := range result.Created {
-			lbIP := helpers.GetLBIP(service)
-			portName := helpers.GetPortNameByNumber(service, created.FwdPort)
+			lbIP := serviceDestinationIP(ctx, r.Client, service)
+			portName := helpers.GetPortNameByNumber(service, created.FwdPort.Low())
 			r.EventPublisher.PublishPortForwardCreatedEvent(ctx, service,
-				portName, fmt.Sprintf("%d:%d", created.DstPort, created.FwdPort),
+				portName, fmt.Sprintf("%s:%s", created.DstPort, created.FwdPort),
 				lbIP, created.DstIP, created.FwdPort, created.DstPort, created.Protocol, "RulesCreatedSuccessfully")
 		}
 
 		// Publish update events
 		for _, updated := range result.Updated {
-			lbIP := helpers.GetLBIP(service)
-			// portName := helpers.GetPortNameByNumber(service, updated.FwdPort)
+			lbIP := serviceDestinationIP(ctx, r.Client, service)
 			r.EventPublisher.PublishPortForwardUpdatedEvent(ctx, service, updated.Name,
-				fmt.Sprintf("%d:%d", updated.DstPort, updated.FwdPort),
+				fmt.Sprintf("%s:%s", updated.DstPort, updated.FwdPort),
 				lbIP, updated.DstIP, updated.DstPort, updated.Protocol, "RulesUpdatedSuccessfully")
 		}
 
 		// Publish deletion events
 		for _, deleted := range result.Deleted {
-			portName := helpers.GetPortNameByNumber(service, deleted.FwdPort)
+			portName := helpers.GetPortNameByNumber(service, deleted.FwdPort.Low())
 			r.EventPublisher.PublishPortForwardDeletedEvent(ctx, service,
-				portName, fmt.Sprintf("%d:%d", deleted.DstPort, deleted.FwdPort),
+				portName, fmt.Sprintf("%s:%s", deleted.DstPort, deleted.FwdPort),
 				deleted.DstPort, deleted.Protocol, "RulesDeletedSuccessfully",
 			)
 		}
@@ -421,34 +434,9 @@ func (r *PortForwardReconciler) finalizeService(ctx context.Context, service *co
 	var operations []PortOperation
 	for _, rule := range currentRules {
 		if helpers.RuleBelongsToService(rule.Name, service.Namespace, service.Name) {
-			// Convert string ports to int for PortConfig
-			dstPort := 0
-			if rule.DstPort != "" {
-				if p, err := strconv.Atoi(rule.DstPort); err == nil {
-					dstPort = p
-				}
-			}
-			fwdPort := 0
-			if rule.FwdPort != "" {
-				if p, err := strconv.Atoi(rule.FwdPort); err == nil {
-					fwdPort = p
-				}
-			}
-
-			config := routers.PortConfig{
-				Name:      rule.Name,
-				DstPort:   dstPort,
-				FwdPort:   fwdPort,
-				DstIP:     rule.Fwd,
-				Protocol:  rule.Proto,
-				Enabled:   rule.Enabled,
-				Interface: rule.PfwdInterface,
-				SrcIP:     rule.Src,
-			}
-
 			operations = append(operations, PortOperation{
 				Type:         OpDelete,
-				Config:       config,
+				Config:       configFromRule(rule),
 				ExistingRule: rule,
 				Reason:       "service_deletion_finalizer",
 			})
@@ -467,9 +455,9 @@ func (r *PortForwardReconciler) finalizeService(ctx context.Context, service *co
 	// Publish deletion events for successfully removed ports
 	if r.EventPublisher != nil {
 		for _, deletedConfig := range result.Deleted {
-			portName := helpers.GetPortNameByNumber(service, deletedConfig.FwdPort)
+			portName := helpers.GetPortNameByNumber(service, deletedConfig.FwdPort.Low())
 			r.EventPublisher.PublishPortForwardDeletedEvent(ctx, service,
-				portName, fmt.Sprintf("%d:%d", deletedConfig.DstPort, deletedConfig.FwdPort),
+				portName, fmt.Sprintf("%s:%s", deletedConfig.DstPort, deletedConfig.FwdPort),
 				deletedConfig.DstPort, deletedConfig.Protocol, "ServiceCleanup")
 		}
 	}
@@ -483,7 +471,7 @@ func (r *PortForwardReconciler) finalizeService(ctx context.Context, service *co
 
 // detectChanges determines what changes are needed using fresh router state
 func (r *PortForwardReconciler) detectChanges(ctx context.Context, service *corev1.Service, serviceKey string, allCurrentRules []*unifi.PortForward) *ChangeContext {
-	lbIP := helpers.GetLBIP(service)
+	lbIP := serviceDestinationIP(ctx, r.Client, service)
 
 	// Filter current rules for this specific service from fresh router data
 	var currentRules []*unifi.PortForward
@@ -523,7 +511,7 @@ func (r *PortForwardReconciler) detectChanges(ctx context.Context, service *core
 	}
 
 	// Calculate desired state for optimization comparison
-	desiredConfigs, err := r.calculateDesiredState(service)
+	desiredConfigs, err := r.calculateDesiredState(ctx, service)
 	if err != nil {
 		// Log error but don't fail - fall back to IP-based detection
 		ctrllog.FromContext(ctx).Error(err, "Failed to calculate desired state for optimization")
@@ -627,34 +615,9 @@ func (r *PortForwardReconciler) handleMissingServiceCleanup(ctx context.Context,
 	var operations []PortOperation
 	for _, rule := range currentRules {
 		if helpers.RuleBelongsToService(rule.Name, namespacedName.Namespace, namespacedName.Name) {
-			// Convert string ports to int for PortConfig
-			dstPort := 0
-			if rule.DstPort != "" {
-				if p, err := strconv.Atoi(rule.DstPort); err == nil {
-					dstPort = p
-				}
-			}
-			fwdPort := 0
-			if rule.FwdPort != "" {
-				if p, err := strconv.Atoi(rule.FwdPort); err == nil {
-					fwdPort = p
-				}
-			}
-
-			config := routers.PortConfig{
-				Name:      rule.Name,
-				DstPort:   dstPort,
-				FwdPort:   fwdPort,
-				DstIP:     rule.Fwd,
-				Protocol:  rule.Proto,
-				Enabled:   rule.Enabled,
-				Interface: rule.PfwdInterface,
-				SrcIP:     rule.Src,
-			}
-
 			operations = append(operations, PortOperation{
 				Type:         OpDelete,
-				Config:       config,
+				Config:       configFromRule(rule),
 				ExistingRule: rule,
 				Reason:       "missing_service_race_condition",
 			})
@@ -808,16 +771,12 @@ func (r *PortForwardReconciler) portConfigsMatch(ctx context.Context, currentRul
 	// Build maps for efficient comparison
 	currentMap := make(map[string]*unifi.PortForward)
 	for _, rule := range currentRules {
-		key := fmt.Sprintf("%d-%d-%s", helpers.ParseIntField(rule.DstPort),
-			helpers.ParseIntField(rule.FwdPort), rule.Proto)
-		currentMap[key] = rule
+		currentMap[rulePortKey(rule)] = rule
 	}
 
 	// Check each desired config against current state
 	for _, desired := range desiredConfigs {
-		key := fmt.Sprintf("%d-%d-%s", desired.DstPort, desired.FwdPort, desired.Protocol)
-
-		current, exists := currentMap[key]
+		current, exists := currentMap[portKey(desired.DstPort, desired.FwdPort, desired.Protocol)]
 		if !exists {
 			return false // Rule doesn't exist
 		}

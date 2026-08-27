@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"unifi-port-forward/pkg/ports"
 	"unifi-port-forward/pkg/routers"
 )
 
@@ -32,8 +33,8 @@ func TestMockRouter_SimulatedFailure(t *testing.T) {
 	ctx := context.Background()
 	config := routers.PortConfig{
 		Name:      "test/fail:http",
-		DstPort:   8080,
-		FwdPort:   80,
+		DstPort:   ports.FromPort(8080),
+		FwdPort:   ports.FromPort(80),
 		DstIP:     "192.168.1.100",
 		Protocol:  "tcp",
 		Enabled:   true,

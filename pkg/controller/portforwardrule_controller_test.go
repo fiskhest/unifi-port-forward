@@ -9,6 +9,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/tools/record"
 
 	"unifi-port-forward/pkg/api/v1alpha1"
@@ -54,12 +55,12 @@ func TestPortForwardRuleDeletion_SimpleTest(t *testing.T) {
 			Finalizers:        []string{config.FinalizerLabel},
 		},
 		Spec: v1alpha1.PortForwardRuleSpec{
-			ExternalPort:    8080,
+			ExternalPort:    intstr.FromInt32(8080),
 			Protocol:        "tcp",
 			Interface:       "wan",
 			Enabled:         true,
 			DestinationIP:   stringPtr("192.168.1.100"),
-			DestinationPort: intPtr(80),
+			DestinationPort: portPtr(80),
 		},
 		Status: v1alpha1.PortForwardRuleStatus{
 			RouterRuleID: "default/test-rule:8080",
@@ -123,6 +124,7 @@ func stringPtr(s string) *string {
 	return &s
 }
 
-func intPtr(i int) *int {
-	return &i
+func portPtr(port int) *intstr.IntOrString {
+	value := intstr.FromInt32(int32(port))
+	return &value
 }

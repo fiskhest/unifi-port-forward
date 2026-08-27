@@ -4,9 +4,11 @@ metadata:
   name: minecraft-server
   namespace: default
 spec:
+  # A bare number, a quoted range ("8000-8100") or a quoted list ("80,443").
   externalPort: 25565
   protocol: tcp
   destinationIP: "192.168.1.100"
+  # Either a single port, or a spec covering as many ports as externalPort.
   destinationPort: 25565
   enabled: true
   description: "Minecraft server port forwarding"

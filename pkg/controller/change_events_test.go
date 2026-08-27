@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 
+	"unifi-port-forward/pkg/ports"
+
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -26,7 +28,7 @@ func TestPublishPortForwardTakenOwnershipEvent(t *testing.T) {
 		service,
 		"qbittorrent",              // oldRuleName
 		"default/test-service:tcp", // newRuleName
-		6881,                       // externalPort
+		ports.FromPort(6881),       // externalPorts
 		"tcp",                      // protocol
 	)
 

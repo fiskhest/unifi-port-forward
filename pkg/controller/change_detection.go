@@ -5,7 +5,7 @@ import (
 	"reflect"
 
 	"unifi-port-forward/pkg/config"
-	"unifi-port-forward/pkg/helpers"
+	"unifi-port-forward/pkg/destination"
 	"unifi-port-forward/pkg/routers"
 
 	"github.com/filipowm/go-unifi/unifi"
@@ -85,9 +85,12 @@ func analyzeChanges(oldSvc, newSvc *corev1.Service) *ChangeContext {
 		return context // Early return - deletion is most critical
 	}
 
-	// IP changes
-	oldIP := helpers.GetLBIP(oldSvc)
-	newIP := helpers.GetLBIP(newSvc)
+	// IP changes. This runs inside an event predicate, which has no cluster
+	// access, so it can only see addresses the Service itself declares. A
+	// NodePort service whose node address changed is caught by the periodic
+	// drift pass instead.
+	oldIP := destination.DeclaredIP(oldSvc)
+	newIP := destination.DeclaredIP(newSvc)
 	if oldIP != newIP {
 		context.IPChanged = true
 		context.OldIP = oldIP

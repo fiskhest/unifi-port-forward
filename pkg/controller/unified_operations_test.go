@@ -5,6 +5,7 @@ import (
 
 	"unifi-port-forward/pkg/config"
 	"unifi-port-forward/pkg/helpers"
+	"unifi-port-forward/pkg/ports"
 	"unifi-port-forward/pkg/routers"
 
 	"github.com/filipowm/go-unifi/unifi"
@@ -19,8 +20,8 @@ func TestCalculateDelta_CreationScenario(t *testing.T) {
 	desiredConfigs := []routers.PortConfig{
 		{
 			Name:      "default/test-service:http",
-			DstPort:   8080,
-			FwdPort:   80,
+			DstPort:   ports.FromPort(8080),
+			FwdPort:   ports.FromPort(80),
 			DstIP:     "192.168.1.100",
 			Protocol:  "tcp",
 			Enabled:   true,
@@ -76,8 +77,8 @@ func TestCalculateDelta_UpdateScenario(t *testing.T) {
 	desiredConfigs := []routers.PortConfig{
 		{
 			Name:      "default/test-service:http",
-			DstPort:   8080,
-			FwdPort:   80,
+			DstPort:   ports.FromPort(8080),
+			FwdPort:   ports.FromPort(80),
 			DstIP:     "192.168.1.101", // New IP
 			Protocol:  "tcp",
 			Enabled:   true,
@@ -167,8 +168,8 @@ func TestDetectPortConflicts_NoConflicts(t *testing.T) {
 	desiredConfigs := []routers.PortConfig{
 		{
 			Name:      "default/test-service:http",
-			DstPort:   8080,
-			FwdPort:   80,
+			DstPort:   ports.FromPort(8080),
+			FwdPort:   ports.FromPort(80),
 			DstIP:     "192.168.1.100",
 			Protocol:  "tcp",
 			Enabled:   true,
@@ -222,8 +223,8 @@ func TestPortConflicts_CreationScenarios(t *testing.T) {
 			name: "conflict_with_manual_rule",
 			desiredConfig: routers.PortConfig{
 				Name:      "qbittorrent/qbittorrent-bittorrent:tcp",
-				DstPort:   6881,
-				FwdPort:   6881,
+				DstPort:   ports.FromPort(6881),
+				FwdPort:   ports.FromPort(6881),
 				DstIP:     "192.168.72.3",
 				Protocol:  "tcp",
 				Enabled:   true,
@@ -247,8 +248,8 @@ func TestPortConflicts_CreationScenarios(t *testing.T) {
 			name: "no_conflict_different_ports",
 			desiredConfig: routers.PortConfig{
 				Name:      "default/service:tcp",
-				DstPort:   8080,
-				FwdPort:   80,
+				DstPort:   ports.FromPort(8080),
+				FwdPort:   ports.FromPort(80),
 				DstIP:     "192.168.1.100",
 				Protocol:  "tcp",
 				Enabled:   true,
@@ -319,8 +320,8 @@ func TestPortConflicts_AlreadyOwned(t *testing.T) {
 	desiredConfigs := []routers.PortConfig{
 		{
 			Name:      "default/web-service:tcp",
-			DstPort:   8080,
-			FwdPort:   80,
+			DstPort:   ports.FromPort(8080),
+			FwdPort:   ports.FromPort(80),
 			DstIP:     "192.168.1.100",
 			Protocol:  "tcp",
 			Enabled:   true,
@@ -366,8 +367,8 @@ func TestPortConflicts_MultipleConflicts(t *testing.T) {
 	desiredConfigs := []routers.PortConfig{
 		{
 			Name:      "test/service:http",
-			DstPort:   8080,
-			FwdPort:   80,
+			DstPort:   ports.FromPort(8080),
+			FwdPort:   ports.FromPort(80),
 			DstIP:     "192.168.1.100",
 			Protocol:  "tcp",
 			Enabled:   true,
@@ -376,8 +377,8 @@ func TestPortConflicts_MultipleConflicts(t *testing.T) {
 		},
 		{
 			Name:      "test/service:https",
-			DstPort:   8443,
-			FwdPort:   443,
+			DstPort:   ports.FromPort(8443),
+			FwdPort:   ports.FromPort(443),
 			DstIP:     "192.168.1.100",
 			Protocol:  "tcp",
 			Enabled:   true,
@@ -439,7 +440,7 @@ func TestPortConflicts_MultipleConflicts(t *testing.T) {
 	}
 
 	// Verify both conflicts are detected
-	conflictPorts := make(map[int]bool)
+	conflictPorts := make(map[string]bool)
 	for _, op := range operations {
 		if op.Type != OpUpdate {
 			t.Errorf("Expected UPDATE operation for conflict, got %s", op.Type)
@@ -447,19 +448,19 @@ func TestPortConflicts_MultipleConflicts(t *testing.T) {
 		if op.Reason != "ownership_takeover" {
 			t.Errorf("Expected 'ownership_takeover' reason, got %s", op.Reason)
 		}
-		conflictPorts[op.Config.DstPort] = true
+		conflictPorts[op.Config.DstPort.String()] = true
 	}
 
-	if !conflictPorts[8080] {
+	if !conflictPorts["8080"] {
 		t.Error("Expected conflict for port 8080 not detected")
 	}
 
-	if !conflictPorts[8443] {
+	if !conflictPorts["8443"] {
 		t.Error("Expected conflict for port 8443 not detected")
 	}
 
 	// Should not conflict with 8080 rule that has different internal port
-	if conflictPorts[8080] && len(operations) == 3 {
+	if conflictPorts["8080"] && len(operations) == 3 {
 		t.Error("Unexpected conflict detected for port 8080 with different internal port")
 	}
 }
@@ -472,8 +473,8 @@ func TestPortConflicts_ProtocolMismatch(t *testing.T) {
 	desiredConfigs := []routers.PortConfig{
 		{
 			Name:      "test/service:tcp",
-			DstPort:   8080,
-			FwdPort:   80,
+			DstPort:   ports.FromPort(8080),
+			FwdPort:   ports.FromPort(80),
 			DstIP:     "192.168.1.100",
 			Protocol:  "tcp",
 			Enabled:   true,
@@ -519,8 +520,8 @@ func TestPortConflicts_ExternalPortOnly(t *testing.T) {
 	desiredConfigs := []routers.PortConfig{
 		{
 			Name:      "test/service:tcp",
-			DstPort:   8080,
-			FwdPort:   80,
+			DstPort:   ports.FromPort(8080),
+			FwdPort:   ports.FromPort(80),
 			DstIP:     "192.168.1.100",
 			Protocol:  "tcp",
 			Enabled:   true,
@@ -566,8 +567,8 @@ func TestPortConflicts_InternalPortOnly(t *testing.T) {
 	desiredConfigs := []routers.PortConfig{
 		{
 			Name:      "test/service:tcp",
-			DstPort:   8080,
-			FwdPort:   80,
+			DstPort:   ports.FromPort(8080),
+			FwdPort:   ports.FromPort(80),
 			DstIP:     "192.168.1.100",
 			Protocol:  "tcp",
 			Enabled:   true,

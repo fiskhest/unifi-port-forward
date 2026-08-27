@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"testing"
 
+	"unifi-port-forward/pkg/ports"
+
 	"github.com/filipowm/go-unifi/unifi"
 )
 
@@ -18,7 +20,7 @@ func TestPortConfig_Validation(t *testing.T) {
 			name: "valid TCP config",
 			config: PortConfig{
 				Name:      "test-service",
-				DstPort:   8080,
+				DstPort:   ports.FromPort(8080),
 				Enabled:   true,
 				Interface: "wan",
 				DstIP:     "192.168.1.100",
@@ -31,7 +33,7 @@ func TestPortConfig_Validation(t *testing.T) {
 			name: "valid UDP config",
 			config: PortConfig{
 				Name:      "test-service",
-				DstPort:   53,
+				DstPort:   ports.FromPort(53),
 				Enabled:   true,
 				Interface: "wan",
 				DstIP:     "192.168.1.100",
@@ -44,7 +46,7 @@ func TestPortConfig_Validation(t *testing.T) {
 			name: "invalid protocol",
 			config: PortConfig{
 				Name:      "test-service",
-				DstPort:   8080,
+				DstPort:   ports.FromPort(8080),
 				Enabled:   true,
 				Interface: "wan",
 				DstIP:     "192.168.1.100",
@@ -56,7 +58,7 @@ func TestPortConfig_Validation(t *testing.T) {
 		{
 			name: "missing name",
 			config: PortConfig{
-				DstPort:   8080,
+				DstPort:   ports.FromPort(8080),
 				Enabled:   true,
 				Interface: "wan",
 				DstIP:     "192.168.1.100",
@@ -69,7 +71,7 @@ func TestPortConfig_Validation(t *testing.T) {
 			name: "missing destination IP",
 			config: PortConfig{
 				Name:      "test-service",
-				DstPort:   8080,
+				DstPort:   ports.FromPort(8080),
 				Enabled:   true,
 				Interface: "wan",
 				SrcIP:     "any",
@@ -85,7 +87,7 @@ func TestPortConfig_Validation(t *testing.T) {
 			isValid := tt.config.Name != "" &&
 				tt.config.DstIP != "" &&
 				(tt.config.Protocol == "tcp" || tt.config.Protocol == "udp") &&
-				tt.config.DstPort > 0 && tt.config.DstPort <= 65535
+				!tt.config.DstPort.IsEmpty()
 
 			if isValid != tt.valid {
 				t.Errorf("Expected validity %v, got %v", tt.valid, isValid)

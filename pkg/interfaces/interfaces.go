@@ -8,6 +8,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+	"unifi-port-forward/pkg/ports"
 	"unifi-port-forward/pkg/routers"
 )
 
@@ -15,17 +16,17 @@ import (
 type Router interface {
 	ListAllPortForwards(ctx context.Context) ([]*unifi.PortForward, error)
 	AddPort(ctx context.Context, config routers.PortConfig) error
-	UpdatePort(ctx context.Context, externalPort int, config routers.PortConfig) error
+	UpdatePort(ctx context.Context, externalPort ports.Spec, config routers.PortConfig) error
 	RemovePort(ctx context.Context, config routers.PortConfig) error
 	DeletePortForwardByID(ctx context.Context, ruleID string) error
-	CheckPort(ctx context.Context, port int, protocol string) (*unifi.PortForward, bool, error)
+	CheckPort(ctx context.Context, port ports.Spec, protocol string) (*unifi.PortForward, bool, error)
 }
 
 // PortTracker defines the interface for port conflict tracking
 type PortTracker interface {
-	CheckConflict(externalPort int, serviceKey string) error
-	MarkUsed(externalPort int, serviceKey string)
-	UnmarkUsed(externalPort int)
+	CheckConflict(externalPorts ports.Spec, serviceKey string) error
+	MarkUsed(externalPorts ports.Spec, serviceKey string)
+	UnmarkUsed(externalPorts ports.Spec)
 	UnmarkForService(serviceKey string)
 	Clear()
 	GetUsedPorts() map[int]string

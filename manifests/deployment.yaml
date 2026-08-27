@@ -2,6 +2,9 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: unifi-port-forward
+  # Namespaced explicitly so the ServiceAccount and Secret below, which are
+  # namespace-scoped, are actually the ones this pod resolves.
+  namespace: unifi-port-forward
 spec:
   replicas: 1
   selector:
@@ -17,17 +20,51 @@ spec:
       serviceAccountName: unifi-port-forward
       containers:
         - name: unifi-port-forward
-          image: johrad/unifi-port-forward
+          image: ghcr.io/fiskhest/unifi-port-forward:latest
           imagePullPolicy: Always
           env:
-            - name: UNIFI_USERNAME
-              value: unifi-port-forward
             - name: UNIFI_ROUTER_IP
               value: 192.168.1.1
+            # Supply EITHER an API key (recommended, needs UniFi OS 9.0.108+) OR
+            # a username and password. Both keys are optional so the unused one
+            # can simply be left out of the Secret; the controller fails to start
+            # if neither is present.
+            - name: UNIFI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: unifi-port-forward
+                  key: api-key
+                  optional: true
+            - name: UNIFI_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: unifi-port-forward
+                  key: username
+                  optional: true
             - name: UNIFI_PASSWORD
-              value: password
+              valueFrom:
+                secretKeyRef:
+                  name: unifi-port-forward
+                  key: password
+                  optional: true
             - name: DEBUG
-              value: "False"
+              value: "false"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: unifi-port-forward
+  namespace: unifi-port-forward
+type: Opaque
+stringData:
+  # Replace with your own credentials, then delete whichever block you are not
+  # using. Prefer the API key: UniFi OS > Settings > Admins > (your admin) >
+  # Create API Key. The admin needs write access to the network.
+  api-key: replace-me
+
+  # Username/password alternative - delete api-key above if you use these.
+  # username: unifi-port-forward
+  # password: replace-me
 ---
 apiVersion: v1
 kind: ServiceAccount
@@ -43,6 +80,11 @@ rules:
   - apiGroups: [""]
     resources: ["services"]
     verbs: ["get", "list", "watch", "update", "patch"]
+  # Needed to resolve a node address for NodePort services. Without it, NodePort
+  # services must carry the unifi-port-forward.fiskhe.st/dst-ip annotation.
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "watch"]
   - apiGroups: [""]
     resources: ["events"]
     verbs: ["create", "patch"]

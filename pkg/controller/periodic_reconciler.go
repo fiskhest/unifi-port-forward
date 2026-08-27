@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"unifi-port-forward/pkg/config"
-	"unifi-port-forward/pkg/helpers"
 	"unifi-port-forward/pkg/routers"
 
 	corev1 "k8s.io/api/core/v1"
@@ -212,18 +211,8 @@ func (r *PeriodicReconciler) correctServiceDrift(ctx context.Context, analysis *
 		} else {
 			// Risky change: delete then recreate
 			operations = append(operations, PortOperation{
-				Type: OpDelete,
-				Config: routers.PortConfig{
-					// Copy from current rule for deletion
-					Name:      wrongRule.Current.Name,
-					DstPort:   helpers.ParseIntField(wrongRule.Current.DstPort),
-					FwdPort:   helpers.ParseIntField(wrongRule.Current.FwdPort),
-					DstIP:     wrongRule.Current.Fwd,
-					Protocol:  wrongRule.Current.Proto,
-					Enabled:   wrongRule.Current.Enabled,
-					Interface: wrongRule.Current.PfwdInterface,
-					SrcIP:     wrongRule.Current.Src,
-				},
+				Type:         OpDelete,
+				Config:       configFromRule(wrongRule.Current), // Copy from current rule for deletion
 				ExistingRule: wrongRule.Current,
 				Reason:       "drift_wrong_rule_delete",
 			})
@@ -239,17 +228,8 @@ func (r *PeriodicReconciler) correctServiceDrift(ctx context.Context, analysis *
 
 	for _, extraRule := range analysis.ExtraRules {
 		operations = append(operations, PortOperation{
-			Type: OpDelete,
-			Config: routers.PortConfig{
-				Name:      extraRule.Name,
-				DstPort:   helpers.ParseIntField(extraRule.DstPort),
-				FwdPort:   helpers.ParseIntField(extraRule.FwdPort),
-				DstIP:     extraRule.Fwd,
-				Protocol:  extraRule.Proto,
-				Enabled:   extraRule.Enabled,
-				Interface: extraRule.PfwdInterface,
-				SrcIP:     extraRule.Src,
-			},
+			Type:         OpDelete,
+			Config:       configFromRule(extraRule),
 			ExistingRule: extraRule,
 			Reason:       "drift_extra_rule",
 		})
@@ -308,7 +288,7 @@ func (r *PeriodicReconciler) getAllManagedServices(ctx context.Context) ([]*core
 	for i := range services.Items {
 		service := &services.Items[i]
 
-		if r.shouldManageService(service) {
+		if r.shouldManageService(ctx, service) {
 			managedServices = append(managedServices, service)
 		}
 	}
@@ -321,7 +301,7 @@ func (r *PeriodicReconciler) getAllManagedServices(ctx context.Context) ([]*core
 }
 
 // shouldManageService checks if a service should be managed by the periodic reconciler
-func (r *PeriodicReconciler) shouldManageService(service *corev1.Service) bool {
+func (r *PeriodicReconciler) shouldManageService(ctx context.Context, service *corev1.Service) bool {
 	annotations := service.GetAnnotations()
 	if annotations == nil {
 		return false
@@ -332,6 +312,7 @@ func (r *PeriodicReconciler) shouldManageService(service *corev1.Service) bool {
 		return false
 	}
 
-	lbIP := helpers.GetLBIP(service)
-	return lbIP != ""
+	// A service is only manageable once we can say where its traffic should go.
+	// For NodePort that means resolving a node, so this needs the cluster.
+	return serviceDestinationIP(ctx, r.Client, service) != ""
 }
